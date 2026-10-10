@@ -2,6 +2,10 @@ package com.example.viewmodel
 
 import android.app.Application
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
+import android.os.Environment
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.WaterFoxApp
@@ -21,6 +25,7 @@ import com.example.data.database.PasswordEntity
 import com.example.data.preferences.AddressBarPosition
 import com.example.data.preferences.BrowserSettings
 import com.example.data.preferences.UserPreferencesRepository
+import com.example.data.preferences.WallpaperMode
 import com.example.data.security.CryptoManager
 import com.example.ui.theme.ThemeMode
 import kotlinx.coroutines.Dispatchers
@@ -33,7 +38,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.io.File
+import java.io.FileOutputStream
 import java.io.InputStream
 import java.io.OutputStream
 import java.util.concurrent.TimeUnit
@@ -96,8 +104,11 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     val suggestions = MutableStateFlow<List<SearchSuggestion>>(emptyList())
     private var suggestionJob: Job? = null
 
+    // Trigger focus and select all text from Bottom Nav Search button
+    val searchTriggerEvent = MutableStateFlow(0L)
+
     // UI Sheets and Overlays
-    val showHamburgerMenu = MutableStateFlow(false)
+    val showHamburgerMenu = MutableStateFlow(false) // Floating menu in Brave design
     val showFireDialog = MutableStateFlow(false)
     val showShieldSheet = MutableStateFlow(false)
     val showFindInPage = MutableStateFlow(false)
@@ -108,6 +119,11 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     val showFireBurningAnimation = MutableStateFlow(false)
     val snackbarMessage = MutableStateFlow<String?>(null)
     val snackbarActionMessage = MutableStateFlow<SnackbarActionMessage?>(null)
+
+    // Long-Press Popups for Bottom Nav
+    val showBookmarkLongPressPopup = MutableStateFlow(false)
+    val showTabsLongPressPopup = MutableStateFlow(false)
+    val showRecentTabsDialog = MutableStateFlow(false)
 
     // Automation UI Sheets & Dialogs
     val showAutomationQuickFillSheet = MutableStateFlow(false)
@@ -178,6 +194,23 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
                 tabManager.currentSettings = newSettings
             }
         }
+
+        // Ensure default favorites exist
+        viewModelScope.launch(Dispatchers.IO) {
+            val existing = database.favoriteDao().getAllFavorites().first()
+            if (existing.isEmpty()) {
+                val defaults = listOf(
+                    FavoriteEntity(title = "DuckDuckGo", url = "https://duckduckgo.com", orderIndex = 0),
+                    FavoriteEntity(title = "Wikipedia", url = "https://wikipedia.org", orderIndex = 1),
+                    FavoriteEntity(title = "Hacker News", url = "https://news.ycombinator.com", orderIndex = 2),
+                    FavoriteEntity(title = "GitHub", url = "https://github.com", orderIndex = 3),
+                    FavoriteEntity(title = "Reddit", url = "https://reddit.com", orderIndex = 4),
+                    FavoriteEntity(title = "EFF", url = "https://eff.org", orderIndex = 5)
+                )
+                defaults.forEach { database.favoriteDao().insertFavorite(it) }
+            }
+        }
+
         refreshDownloads()
     }
 
@@ -229,7 +262,6 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             var filledCount = 0
             var totalEligible = 0
             try {
-                // evaluateJavascript returns JSON-encoded string or null
                 val cleanJson = if (resultJson.startsWith("\"") && resultJson.endsWith("\"")) {
                     JSONObject(JSONObject(resultJson).toString())
                 } else {
@@ -305,9 +337,24 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     fun navigateTo(screen: AppScreen) {
         _currentScreen.value = screen
         showHamburgerMenu.value = false
+        showBookmarkLongPressPopup.value = false
+        showTabsLongPressPopup.value = false
+        showRecentTabsDialog.value = false
     }
 
     fun handleBackPress(): Boolean {
+        if (showBookmarkLongPressPopup.value) {
+            showBookmarkLongPressPopup.value = false
+            return true
+        }
+        if (showTabsLongPressPopup.value) {
+            showTabsLongPressPopup.value = false
+            return true
+        }
+        if (showRecentTabsDialog.value) {
+            showRecentTabsDialog.value = false
+            return true
+        }
         if (showAutomationQuickFillSheet.value) {
             showAutomationQuickFillSheet.value = false
             return true
@@ -340,11 +387,18 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             _currentScreen.value = AppScreen.BROWSER
             return true
         }
-        // In browser screen: check webview history
+        // In browser screen:
+        val currentTab = tabManager.getCurrentTab()
+        // If home overlay is showing over a loaded tab, leave home overlay
+        if (currentTab != null && currentTab.showHome && currentTab.url.isNotBlank()) {
+            tabManager.leaveHomeOverlay()
+            return true
+        }
+        // Then check webview history
         if (tabManager.goBackCurrentTab()) {
             return true
         }
-        // If can't go back, check tab count
+        // Then check tab count
         val tabs = if (tabManager.isPrivateMode.value) tabManager.privateTabs.value else tabManager.normalTabs.value
         if (tabs.size > 1) {
             tabManager.closeTab(tabManager.currentTabId.value)
@@ -391,6 +445,17 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         isOmnibarFocused.value = false
         suggestions.value = emptyList()
         tabManager.loadUrl(input)
+    }
+
+    fun triggerSearchFromBottomBar() {
+        val currentTab = tabManager.getCurrentTab()
+        val initialText = if (currentTab == null || currentTab.showHome || currentTab.url.isBlank() || currentTab.url.startsWith("about:")) "" else currentTab.url
+        omnibarInput.value = initialText
+        isOmnibarFocused.value = true
+        searchTriggerEvent.value = System.currentTimeMillis()
+        if (initialText.isNotBlank()) {
+            onOmnibarInputChanged(initialText)
+        }
     }
 
     // Fire Action
@@ -441,12 +506,29 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     }
 
     // Bookmarks Operations
+    fun isPageBookmarked(url: String): Boolean {
+        if (url.isBlank() || url.startsWith("about:")) return false
+        return bookmarksList.value.any { it.url == url }
+    }
+
+    fun getBookmarkForUrl(url: String): BookmarkEntity? {
+        if (url.isBlank() || url.startsWith("about:")) return false.let { null }
+        return bookmarksList.value.firstOrNull { it.url == url }
+    }
+
     fun addBookmark(title: String, url: String, folderId: Long? = null) {
         viewModelScope.launch(Dispatchers.IO) {
-            database.bookmarkDao().insertBookmark(
-                BookmarkEntity(title = title, url = url, folderId = folderId)
+            val entity = BookmarkEntity(title = title, url = url, folderId = folderId)
+            database.bookmarkDao().insertBookmark(entity)
+            snackbarActionMessage.value = SnackbarActionMessage(
+                message = "Bookmark added",
+                actionLabel = "UNDO",
+                onAction = {
+                    viewModelScope.launch(Dispatchers.IO) {
+                        database.bookmarkDao().deleteBookmark(entity)
+                    }
+                }
             )
-            snackbarMessage.value = "Bookmark saved"
         }
     }
 
@@ -507,6 +589,13 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
                 FavoriteEntity(title = title, url = url, orderIndex = count)
             )
             snackbarMessage.value = "Added to favorites"
+        }
+    }
+
+    fun editFavorite(favorite: FavoriteEntity) {
+        viewModelScope.launch(Dispatchers.IO) {
+            database.favoriteDao().updateFavorite(favorite)
+            snackbarMessage.value = "Favorite updated"
         }
     }
 
@@ -582,6 +671,33 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    // Save page offline web archive
+    fun saveCurrentPageOffline() {
+        val tab = tabManager.getCurrentTab()
+        if (tab == null || tab.url.isBlank() || tab.showHome) {
+            snackbarMessage.value = "Cannot download home page"
+            return
+        }
+
+        viewModelScope.launch(Dispatchers.IO) {
+            val cleanHost = try { Uri.parse(tab.url).host ?: "page" } catch (e: Exception) { "page" }
+            val fileName = "${cleanHost}_${System.currentTimeMillis()}.mht"
+            val downloadsDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: context.filesDir
+            val destFile = File(downloadsDir, fileName)
+
+            withContext(Dispatchers.Main) {
+                tabManager.saveWebArchive(tab, destFile.absolutePath) { success ->
+                    if (success) {
+                        refreshDownloads()
+                        snackbarMessage.value = "Page saved for offline viewing: $fileName"
+                    } else {
+                        snackbarMessage.value = "Failed to save offline page"
+                    }
+                }
+            }
+        }
+    }
+
     // Downloads
     fun refreshDownloads() {
         viewModelScope.launch(Dispatchers.IO) {
@@ -609,6 +725,52 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     fun updateOpenLinksInBackground(inBackground: Boolean) = viewModelScope.launch { preferencesRepository.setOpenLinksInBackground(inBackground) }
     fun updateTextSizePercent(percent: Int) = viewModelScope.launch { preferencesRepository.setTextSizePercent(percent) }
     fun dismissTrackerBanner() = viewModelScope.launch { preferencesRepository.setTrackerBannerDismissed(true) }
+
+    fun updateWallpaperMode(mode: WallpaperMode) = viewModelScope.launch { preferencesRepository.setWallpaperMode(mode) }
+    fun updateWallpaperSolidColor(colorHex: String) = viewModelScope.launch { preferencesRepository.setWallpaperSolidColor(colorHex) }
+
+    fun setCustomWallpaperFromUri(uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val wallpapersDir = File(context.filesDir, "wallpapers").apply { mkdirs() }
+                val targetFile = File(wallpapersDir, "custom_wallpaper_${System.currentTimeMillis()}.jpg")
+
+                // Decode downsampled to screen size off main thread
+                val inputStream = context.contentResolver.openInputStream(uri)
+                val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeStream(inputStream, null, options)
+                inputStream?.close()
+
+                val screenWidth = context.resources.displayMetrics.widthPixels.coerceAtLeast(720)
+                val screenHeight = context.resources.displayMetrics.heightPixels.coerceAtLeast(1280)
+                var sampleSize = 1
+                while (options.outWidth / (sampleSize * 2) >= screenWidth &&
+                    options.outHeight / (sampleSize * 2) >= screenHeight
+                ) {
+                    sampleSize *= 2
+                }
+
+                val decodeOptions = BitmapFactory.Options().apply {
+                    inSampleSize = sampleSize
+                    inPreferredConfig = Bitmap.Config.RGB_565
+                }
+                val freshStream = context.contentResolver.openInputStream(uri)
+                val sampledBitmap = BitmapFactory.decodeStream(freshStream, null, decodeOptions)
+                freshStream?.close()
+
+                if (sampledBitmap != null) {
+                    FileOutputStream(targetFile).use { out ->
+                        sampledBitmap.compress(Bitmap.CompressFormat.JPEG, 85, out)
+                    }
+                    preferencesRepository.setCustomWallpaperPath(targetFile.absolutePath)
+                    preferencesRepository.setWallpaperMode(WallpaperMode.GALLERY_IMAGE)
+                    snackbarMessage.value = "Wallpaper updated"
+                }
+            } catch (e: Exception) {
+                snackbarMessage.value = "Failed to load image from gallery"
+            }
+        }
+    }
 
     fun clearBrowsingData(clearHistory: Boolean, clearCookies: Boolean, clearCache: Boolean, clearTabs: Boolean) {
         viewModelScope.launch(Dispatchers.IO) {

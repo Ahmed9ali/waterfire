@@ -27,7 +27,16 @@ data class Tab(
     var webView: WebView? = null,
     var isDesktopMode: Boolean = false,
     var hasCrashError: Boolean = false,
-    var crashRecoveryAttempts: Int = 0
+    var crashRecoveryAttempts: Int = 0,
+    var showHome: Boolean = false
+)
+
+data class ClosedTabInfo(
+    val id: String = UUID.randomUUID().toString(),
+    val title: String,
+    val url: String,
+    val isPrivate: Boolean = false,
+    val timestamp: Long = System.currentTimeMillis()
 )
 
 sealed class JsDialogState {

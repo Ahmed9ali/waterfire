@@ -53,7 +53,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import com.example.data.preferences.AddressBarPosition
+import com.example.data.preferences.WallpaperMode
 import com.example.ui.theme.BrandOrange
 import com.example.ui.theme.ThemeMode
 import com.example.viewmodel.AppScreen
@@ -69,6 +72,10 @@ fun SettingsScreen(viewModel: BrowserViewModel) {
 
     val settings by viewModel.settings.collectAsState()
     var showClearDataDialog by remember { mutableStateOf(false) }
+    var showWallpaperDialog by remember { mutableStateOf(false) }
+    val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        uri?.let { viewModel.setCustomWallpaperFromUri(it) }
+    }
 
     Column(
         modifier = Modifier
@@ -173,6 +180,22 @@ fun SettingsScreen(viewModel: BrowserViewModel) {
                     )
                 }
             }
+
+            // Home Page Wallpaper selector
+            SettingsClickableItem(
+                title = "Home page wallpaper",
+                subtitle = when (settings.wallpaperMode) {
+                    WallpaperMode.GRADIENT_1 -> "Sunset Ember (Built-in)"
+                    WallpaperMode.GRADIENT_2 -> "Midnight Purple (Built-in)"
+                    WallpaperMode.GRADIENT_3 -> "Ocean Abyss (Built-in)"
+                    WallpaperMode.GRADIENT_4 -> "Vulcan Flame (Built-in)"
+                    WallpaperMode.GRADIENT_5 -> "Cyber Twilight (Built-in)"
+                    WallpaperMode.SOLID_COLOR -> "Solid Color (${settings.wallpaperSolidColor})"
+                    WallpaperMode.GALLERY_IMAGE -> "Custom Image from Gallery"
+                },
+                icon = R.drawable.ic_settings,
+                onClick = { showWallpaperDialog = true }
+            )
 
             // Address bar position
             var showPositionMenu by remember { mutableStateOf(false) }
@@ -420,6 +443,145 @@ fun SettingsScreen(viewModel: BrowserViewModel) {
                 TextButton(onClick = { showClearDataDialog = false }) { Text("Cancel") }
             }
         )
+    }
+
+    // Home Page Wallpaper Selection Dialog
+    if (showWallpaperDialog) {
+        AlertDialog(
+            onDismissRequest = { showWallpaperDialog = false },
+            title = { Text("Choose Wallpaper", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    Text("Built-in Themes", fontWeight = FontWeight.Bold, color = BrandOrange, fontSize = 13.sp)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    WallpaperOptionItem(
+                        title = "Sunset Ember (Navy / Orange)",
+                        isSelected = settings.wallpaperMode == WallpaperMode.GRADIENT_1,
+                        onClick = {
+                            viewModel.updateWallpaperMode(WallpaperMode.GRADIENT_1)
+                            showWallpaperDialog = false
+                        }
+                    )
+                    WallpaperOptionItem(
+                        title = "Midnight Purple (Obsidian / Coral)",
+                        isSelected = settings.wallpaperMode == WallpaperMode.GRADIENT_2,
+                        onClick = {
+                            viewModel.updateWallpaperMode(WallpaperMode.GRADIENT_2)
+                            showWallpaperDialog = false
+                        }
+                    )
+                    WallpaperOptionItem(
+                        title = "Ocean Abyss (Teal / Amber)",
+                        isSelected = settings.wallpaperMode == WallpaperMode.GRADIENT_3,
+                        onClick = {
+                            viewModel.updateWallpaperMode(WallpaperMode.GRADIENT_3)
+                            showWallpaperDialog = false
+                        }
+                    )
+                    WallpaperOptionItem(
+                        title = "Vulcan Flame (Charcoal / Flame)",
+                        isSelected = settings.wallpaperMode == WallpaperMode.GRADIENT_4,
+                        onClick = {
+                            viewModel.updateWallpaperMode(WallpaperMode.GRADIENT_4)
+                            showWallpaperDialog = false
+                        }
+                    )
+                    WallpaperOptionItem(
+                        title = "Cyber Twilight (Indigo / Tangerine)",
+                        isSelected = settings.wallpaperMode == WallpaperMode.GRADIENT_5,
+                        onClick = {
+                            viewModel.updateWallpaperMode(WallpaperMode.GRADIENT_5)
+                            showWallpaperDialog = false
+                        }
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text("Solid Colors", fontWeight = FontWeight.Bold, color = BrandOrange, fontSize = 13.sp)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    WallpaperOptionItem(
+                        title = "Charcoal (#16171B)",
+                        isSelected = settings.wallpaperMode == WallpaperMode.SOLID_COLOR && settings.wallpaperSolidColor == "#16171B",
+                        onClick = {
+                            viewModel.updateWallpaperSolidColor("#16171B")
+                            viewModel.updateWallpaperMode(WallpaperMode.SOLID_COLOR)
+                            showWallpaperDialog = false
+                        }
+                    )
+                    WallpaperOptionItem(
+                        title = "Deep Navy (#0B111A)",
+                        isSelected = settings.wallpaperMode == WallpaperMode.SOLID_COLOR && settings.wallpaperSolidColor == "#0B111A",
+                        onClick = {
+                            viewModel.updateWallpaperSolidColor("#0B111A")
+                            viewModel.updateWallpaperMode(WallpaperMode.SOLID_COLOR)
+                            showWallpaperDialog = false
+                        }
+                    )
+                    WallpaperOptionItem(
+                        title = "Dark Slate (#1C2331)",
+                        isSelected = settings.wallpaperMode == WallpaperMode.SOLID_COLOR && settings.wallpaperSolidColor == "#1C2331",
+                        onClick = {
+                            viewModel.updateWallpaperSolidColor("#1C2331")
+                            viewModel.updateWallpaperMode(WallpaperMode.SOLID_COLOR)
+                            showWallpaperDialog = false
+                        }
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text("Custom Image", fontWeight = FontWeight.Bold, color = BrandOrange, fontSize = 13.sp)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    WallpaperOptionItem(
+                        title = "Choose from Gallery / Photos…",
+                        isSelected = settings.wallpaperMode == WallpaperMode.GALLERY_IMAGE,
+                        onClick = {
+                            showWallpaperDialog = false
+                            try {
+                                galleryLauncher.launch("image/*")
+                            } catch (e: Exception) {
+                                viewModel.snackbarMessage.value = "Failed to launch image picker"
+                            }
+                        }
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showWallpaperDialog = false }) { Text("Close") }
+            }
+        )
+    }
+}
+
+@Composable
+private fun WallpaperOptionItem(
+    title: String,
+    isSelected: Boolean,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 10.dp, horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = title,
+            fontSize = 14.sp,
+            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+            color = if (isSelected) BrandOrange else MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f)
+        )
+        if (isSelected) {
+            Icon(
+                painter = painterResource(id = R.drawable.ic_bookmark),
+                contentDescription = "Selected",
+                tint = BrandOrange,
+                modifier = Modifier.size(16.dp)
+            )
+        }
     }
 }
 

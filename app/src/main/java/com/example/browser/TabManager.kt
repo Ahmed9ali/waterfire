@@ -41,6 +41,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.io.ByteArrayInputStream
+import java.io.File
 import java.util.UUID
 
 class TabManager(
@@ -62,6 +63,10 @@ class TabManager(
     private val _isPrivateMode = MutableStateFlow(false)
     val isPrivateMode: StateFlow<Boolean> = _isPrivateMode.asStateFlow()
 
+    // Recently closed tabs (up to 10)
+    private val _recentlyClosedTabs = MutableStateFlow<List<ClosedTabInfo>>(emptyList())
+    val recentlyClosedTabs: StateFlow<List<ClosedTabInfo>> = _recentlyClosedTabs.asStateFlow()
+
     // Dialog & UI Callbacks
     val jsDialogState = MutableStateFlow<JsDialogState?>(null)
     val sslErrorState = MutableStateFlow<SslErrorState?>(null)
@@ -77,6 +82,13 @@ class TabManager(
     // Automation Callbacks
     var onFormDetected: ((url: String, count: Int) -> Unit)? = null
     var onFormSubmitted: (() -> Unit)? = null
+
+    // Performance timing tracker per tab (startTime)
+    private val tabNavigationStartTimes = HashMap<String, Long>()
+    private val tabReportedFirstProgress = HashSet<String>()
+
+    // Pre-warmed background WebView
+    private var prewarmedWebView: WebView? = null
 
     private var cachedAutomationScript: String? = null
 
@@ -99,6 +111,7 @@ class TabManager(
         }
 
     companion object {
+        const val TAG = "WFPerf"
         const val MOBILE_USER_AGENT = "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36 WaterFox/1.0"
         const val DESKTOP_USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 WaterFox/1.0"
 
@@ -118,9 +131,7 @@ class TabManager(
                     if (typeof HTMLCanvasElement !== 'undefined' && HTMLCanvasElement.prototype) {
                         var origGetCtx = HTMLCanvasElement.prototype.getContext;
                         HTMLCanvasElement.prototype.getContext = function(type, attrs) {
-                            if (isGlType(type)) {
-                                return null;
-                            }
+                            if (isGlType(type)) return null;
                             return origGetCtx.apply(this, arguments);
                         };
                     }
@@ -128,9 +139,7 @@ class TabManager(
                     if (typeof OffscreenCanvas !== 'undefined' && OffscreenCanvas.prototype && OffscreenCanvas.prototype.getContext) {
                         var origOffscreenGetCtx = OffscreenCanvas.prototype.getContext;
                         OffscreenCanvas.prototype.getContext = function(type, attrs) {
-                            if (isGlType(type)) {
-                                return null;
-                            }
+                            if (isGlType(type)) return null;
                             return origOffscreenGetCtx.apply(this, arguments);
                         };
                     }
@@ -191,6 +200,26 @@ class TabManager(
         }
     }
 
+    /**
+     * Pre-warm one WebView in background during splash so first navigation is instant
+     */
+    fun prewarmWebView(targetContext: Context) {
+        if (prewarmedWebView != null) return
+        try {
+            val wv = WebView(targetContext.applicationContext).apply {
+                layoutParams = ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                )
+            }
+            configureWebSettings(wv.settings, false)
+            prewarmedWebView = wv
+            Log.d(TAG, "Pre-warmed background WebView initialized")
+        } catch (e: Exception) {
+            Log.w(TAG, "Pre-warming WebView failed", e)
+        }
+    }
+
     fun getCurrentTab(): Tab? {
         val currentId = _currentTabId.value
         val list = if (_isPrivateMode.value) _privateTabs.value else _normalTabs.value
@@ -220,7 +249,8 @@ class TabManager(
             url = initialUrl,
             title = if (initialUrl.isNotBlank()) "Loading…" else "New Tab",
             isPrivate = isPrivate,
-            isDesktopMode = currentSettings.desktopSiteDefault
+            isDesktopMode = currentSettings.desktopSiteDefault,
+            showHome = initialUrl.isBlank()
         )
 
         if (isPrivate) {
@@ -236,22 +266,25 @@ class TabManager(
                 _currentTabId.value = newTab.id
                 updateCurrentTabInRoom(newTab.id)
             }
-            // Persist to Room
-            scope.launch(Dispatchers.IO) {
-                database.tabDao().insertTab(
-                    TabEntity(
-                        id = newTab.id,
-                        title = newTab.title,
-                        url = newTab.url,
-                        isPrivate = false,
-                        createdAt = System.currentTimeMillis(),
-                        lastAccessedAt = System.currentTimeMillis(),
-                        isCurrent = !openInBackground
+            // Persist to Room only if has URL
+            if (initialUrl.isNotBlank()) {
+                scope.launch(Dispatchers.IO) {
+                    database.tabDao().insertTab(
+                        TabEntity(
+                            id = newTab.id,
+                            title = newTab.title,
+                            url = newTab.url,
+                            isPrivate = false,
+                            createdAt = System.currentTimeMillis(),
+                            lastAccessedAt = System.currentTimeMillis(),
+                            isCurrent = !openInBackground
+                        )
                     )
-                )
+                }
             }
         }
 
+        // Lazy creation: only instantiate WebView if there's an actual URL to load
         if (initialUrl.isNotBlank()) {
             getOrCreateWebView(newTab)
             loadUrlInTab(newTab, initialUrl)
@@ -264,7 +297,12 @@ class TabManager(
         val isPrivate = _privateTabs.value.any { it.id == id }
         if (isPrivate) {
             val tab = _privateTabs.value.firstOrNull { it.id == id }
-            tab?.let { destroyTabWebView(it) }
+            tab?.let {
+                if (it.url.isNotBlank() && !it.url.startsWith("about:")) {
+                    recordRecentlyClosed(it.title, it.url, isPrivate = true)
+                }
+                destroyTabWebView(it)
+            }
             val remaining = _privateTabs.value.filter { it.id != id }
             _privateTabs.value = remaining
             if (_currentTabId.value == id) {
@@ -281,7 +319,12 @@ class TabManager(
             }
         } else {
             val tab = _normalTabs.value.firstOrNull { it.id == id }
-            tab?.let { destroyTabWebView(it) }
+            tab?.let {
+                if (it.url.isNotBlank() && !it.url.startsWith("about:")) {
+                    recordRecentlyClosed(it.title, it.url, isPrivate = false)
+                }
+                destroyTabWebView(it)
+            }
             val remaining = _normalTabs.value.filter { it.id != id }
             _normalTabs.value = remaining
 
@@ -299,6 +342,20 @@ class TabManager(
                 }
             }
         }
+    }
+
+    private fun recordRecentlyClosed(title: String, url: String, isPrivate: Boolean) {
+        val item = ClosedTabInfo(title = if (title.isNotBlank()) title else url, url = url, isPrivate = isPrivate)
+        _recentlyClosedTabs.value = (listOf(item) + _recentlyClosedTabs.value).take(10)
+    }
+
+    fun restoreRecentlyClosedTab(): Boolean {
+        val list = _recentlyClosedTabs.value
+        if (list.isEmpty()) return false
+        val toRestore = list.first()
+        _recentlyClosedTabs.value = list.drop(1)
+        createNewTab(isPrivate = toRestore.isPrivate, initialUrl = toRestore.url)
+        return true
     }
 
     fun closeAllTabs(isPrivateOnly: Boolean = false) {
@@ -359,17 +416,19 @@ class TabManager(
     private fun updateCurrentTabInRoom(currentId: String) {
         scope.launch(Dispatchers.IO) {
             _normalTabs.value.forEach { tab ->
-                database.tabDao().insertTab(
-                    TabEntity(
-                        id = tab.id,
-                        title = tab.title,
-                        url = tab.url,
-                        isPrivate = false,
-                        createdAt = System.currentTimeMillis(),
-                        lastAccessedAt = if (tab.id == currentId) System.currentTimeMillis() else 0L,
-                        isCurrent = tab.id == currentId
+                if (tab.url.isNotBlank()) {
+                    database.tabDao().insertTab(
+                        TabEntity(
+                            id = tab.id,
+                            title = tab.title,
+                            url = tab.url,
+                            isPrivate = false,
+                            createdAt = System.currentTimeMillis(),
+                            lastAccessedAt = if (tab.id == currentId) System.currentTimeMillis() else 0L,
+                            isCurrent = tab.id == currentId
+                        )
                     )
-                )
+                }
             }
         }
     }
@@ -390,13 +449,10 @@ class TabManager(
         ) {
             // direct URL
         } else if (lower.startsWith("localhost") || lower.matches(Regex("^(\\d{1,3}\\.){3}\\d{1,3}(:\\d+)?(/.*)?\$"))) {
-            // Localhost or IP address
             processedUrl = "http://$processedUrl"
         } else if (processedUrl.contains(".") && !processedUrl.contains(" ") && !processedUrl.contains("\n")) {
-            // Domain input (e.g. wikipedia.org or example.com:8080)
             processedUrl = "https://$processedUrl"
         } else {
-            // DuckDuckGo search with UTF-8 encoding
             processedUrl = DuckDuckGoApi.buildSearchUrl(processedUrl)
         }
 
@@ -407,10 +463,17 @@ class TabManager(
 
         tab.url = processedUrl
         tab.title = "Loading…"
+        tab.showHome = false
         tab.isHttps = processedUrl.startsWith("https://")
         tab.hasSslError = false
         tab.hasCrashError = false
         tab.crashRecoveryAttempts = 0
+
+        // Timing log (WFPerf)
+        tabNavigationStartTimes[tab.id] = System.currentTimeMillis()
+        tabReportedFirstProgress.remove(tab.id)
+        Log.d(TAG, "Navigation start: $processedUrl")
+
         notifyTabUpdated(tab)
 
         val webView = getOrCreateWebView(tab)
@@ -424,6 +487,9 @@ class TabManager(
         val currentUrl = tab.url
         val wv = tab.webView
         if (wv != null && !wv.url.isNullOrBlank()) {
+            tabNavigationStartTimes[tab.id] = System.currentTimeMillis()
+            tabReportedFirstProgress.remove(tab.id)
+            Log.d(TAG, "Navigation reload: $currentUrl")
             try {
                 wv.reload()
             } catch (e: Exception) {
@@ -431,14 +497,29 @@ class TabManager(
                 newWv.loadUrl(currentUrl)
             }
         } else if (currentUrl.isNotBlank()) {
+            tabNavigationStartTimes[tab.id] = System.currentTimeMillis()
+            tabReportedFirstProgress.remove(tab.id)
             val newWv = getOrCreateWebView(tab)
             newWv.loadUrl(currentUrl)
         }
         notifyTabUpdated(tab)
     }
 
+    fun stopCurrentTab() {
+        val tab = getCurrentTab() ?: return
+        tab.webView?.stopLoading()
+        tab.isLoading = false
+        notifyTabUpdated(tab)
+    }
+
     fun goBackCurrentTab(): Boolean {
-        val webView = getCurrentTab()?.webView
+        val tab = getCurrentTab() ?: return false
+        if (tab.showHome && tab.url.isNotBlank()) {
+            tab.showHome = false
+            notifyTabUpdated(tab)
+            return true
+        }
+        val webView = tab.webView
         if (webView != null && webView.canGoBack()) {
             webView.goBack()
             return true
@@ -464,6 +545,40 @@ class TabManager(
         notifyTabUpdated(tab)
     }
 
+    fun showHomeInCurrentTab() {
+        val tab = getCurrentTab() ?: return
+        if (!tab.showHome) {
+            tab.showHome = true
+            notifyTabUpdated(tab)
+        }
+    }
+
+    fun leaveHomeOverlay() {
+        val tab = getCurrentTab() ?: return
+        if (tab.showHome && tab.url.isNotBlank()) {
+            tab.showHome = false
+            notifyTabUpdated(tab)
+        }
+    }
+
+    /**
+     * Save web archive for offline viewing into downloads
+     */
+    fun saveWebArchive(tab: Tab, targetPath: String, onComplete: (Boolean) -> Unit) {
+        val wv = tab.webView
+        if (wv == null) {
+            onComplete(false)
+            return
+        }
+        try {
+            wv.saveWebArchive(targetPath, false) { resultPath ->
+                onComplete(resultPath != null)
+            }
+        } catch (e: Exception) {
+            onComplete(false)
+        }
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     fun getOrCreateWebView(tab: Tab, customContext: Context? = null): WebView {
         if (tab.webView != null) {
@@ -472,13 +587,22 @@ class TabManager(
 
         val targetContext = customContext ?: activityContext ?: context
         com.example.WaterFoxApp.ensureWebViewCacheDirectories(targetContext)
-        val webView = WebView(targetContext).apply {
-            layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-            isFocusable = true
-            isFocusableInTouchMode = true
+
+        // Reuse pre-warmed WebView if available for first navigation
+        val webView: WebView = if (prewarmedWebView != null) {
+            val pw = prewarmedWebView!!
+            prewarmedWebView = null
+            (pw.parent as? ViewGroup)?.removeView(pw)
+            pw
+        } else {
+            WebView(targetContext).apply {
+                layoutParams = ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                )
+                isFocusable = true
+                isFocusableInTouchMode = true
+            }
         }
 
         configureWebSettings(webView.settings, tab.isDesktopMode)
@@ -493,21 +617,17 @@ class TabManager(
             "WaterFoxAutomation"
         )
 
-        // Inject WebGL safe script before any page script executes to prevent Mesa framebuffer crashes
+        // Inject WebGL safe script before any page script executes
         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
             try {
                 WebViewCompat.addDocumentStartJavaScript(webView, WEBGL_SAFE_SCRIPT, setOf("*"))
-            } catch (e: Exception) {
-                Log.w("TabManager", "addDocumentStartJavaScript failed", e)
-            }
+            } catch (e: Exception) {}
             try {
                 val autoScript = getAutomationScript()
                 if (autoScript.isNotBlank()) {
                     WebViewCompat.addDocumentStartJavaScript(webView, autoScript, setOf("*"))
                 }
-            } catch (e: Exception) {
-                Log.w("TabManager", "addDocumentStartJavaScript automation failed", e)
-            }
+            } catch (e: Exception) {}
         }
 
         // Cookies
@@ -525,14 +645,12 @@ class TabManager(
                 val uri = request?.url ?: return false
                 val urlString = uri.toString()
 
-                // Check external schemes (mailto:, tel:, sms:, geo:, intent:, market:)
                 val scheme = uri.scheme?.lowercase() ?: ""
                 if (scheme in listOf("mailto", "tel", "sms", "geo", "market", "intent")) {
                     handleExternalScheme(uri)
                     return true
                 }
 
-                // If target url starts with http/https
                 if (scheme == "http" || scheme == "https") {
                     if (currentSettings.httpsUpgradeEnabled && scheme == "http") {
                         val upgraded = "https://" + urlString.substring(7)
@@ -549,33 +667,18 @@ class TabManager(
                 val requestUrl = request?.url?.toString() ?: return null
                 val mainUrl = tab.url
 
-                // Check Tracker blocking
+                // Check Tracker blocking - O(1) in-memory HashSet lookup
                 if (currentSettings.trackerBlockingEnabled) {
                     val trackerHost = trackerBlocker.isTracker(requestUrl, mainUrl)
                     if (trackerHost != null) {
                         synchronized(tab) {
                             tab.blockedTrackersCount++
-                            val list = tab.blockedTrackersList.toMutableList()
+                            val list = tab.blockedTrackersList
                             if (!list.contains(trackerHost)) {
-                                list.add(trackerHost)
+                                tab.blockedTrackersList = list + trackerHost
                             }
-                            tab.blockedTrackersList = list
                         }
-                        scope.launch(Dispatchers.Main) {
-                            notifyTabUpdated(tab)
-                        }
-
-                        // Save to Room for statistics banner
-                        scope.launch(Dispatchers.IO) {
-                            database.blockedTrackerDao().insertBlockedTracker(
-                                BlockedTrackerEntity(
-                                    domain = trackerHost,
-                                    pageUrl = mainUrl
-                                )
-                            )
-                        }
-
-                        // Block tracker by returning empty response
+                        // Return empty response immediately without disk/proxy overhead
                         return WebResourceResponse("text/plain", "UTF-8", ByteArrayInputStream(ByteArray(0)))
                     }
                 }
@@ -613,20 +716,27 @@ class TabManager(
                 tab.hasCrashError = false
                 tab.crashRecoveryAttempts = 0
 
-                // Inject fallback automation script
-                try {
-                    val script = getAutomationScript()
-                    if (script.isNotBlank()) {
-                        view?.evaluateJavascript(script, null)
-                    }
-                } catch (e: Exception) {}
+                // WFPerf Timing log
+                val start = tabNavigationStartTimes[tab.id] ?: 0L
+                val elapsed = if (start > 0) System.currentTimeMillis() - start else 0L
+                Log.d(TAG, "onPageFinished: $currentUrl in ${elapsed}ms")
 
-                // Capture thumbnail for tab switcher safely
+                // Fallback automation script injection only if document_start wasn't supported
+                if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+                    try {
+                        val script = getAutomationScript()
+                        if (script.isNotBlank()) {
+                            view?.evaluateJavascript(script, null)
+                        }
+                    } catch (e: Exception) {}
+                }
+
+                // Capture downsampled thumbnail safely off critical path
                 captureThumbnail(view, tab)
 
                 notifyTabUpdated(tab)
 
-                // Save to Room History and TabEntity if normal tab
+                // Persist to Room History and TabEntity throttled on page completion
                 if (!tab.isPrivate && currentUrl.isNotBlank() && !currentUrl.startsWith("about:")) {
                     scope.launch(Dispatchers.IO) {
                         database.historyDao().insertHistory(
@@ -647,6 +757,15 @@ class TabManager(
                                 isCurrent = tab.id == _currentTabId.value
                             )
                         )
+                        // Batch insert blocked trackers for this page
+                        tab.blockedTrackersList.forEach { trackerDomain ->
+                            database.blockedTrackerDao().insertBlockedTracker(
+                                BlockedTrackerEntity(
+                                    domain = trackerDomain,
+                                    pageUrl = currentUrl
+                                )
+                            )
+                        }
                     }
                 }
             }
@@ -672,14 +791,14 @@ class TabManager(
 
             override fun onRenderProcessGone(view: WebView?, detail: RenderProcessGoneDetail?): Boolean {
                 val didCrash = detail?.didCrash() ?: true
-                Log.e("TabManager", "onRenderProcessGone detected (crashed=$didCrash, attempts=${tab.crashRecoveryAttempts})")
+                Log.e(TAG, "onRenderProcessGone detected (crashed=$didCrash, attempts=${tab.crashRecoveryAttempts})")
 
                 view?.let { crashedView ->
                     (crashedView.parent as? ViewGroup)?.removeView(crashedView)
                     try {
                         crashedView.destroy()
                     } catch (e: Exception) {
-                        Log.e("TabManager", "Error destroying crashed WebView", e)
+                        Log.e(TAG, "Error destroying crashed WebView", e)
                     }
                 }
 
@@ -715,6 +834,16 @@ class TabManager(
                 if (newProgress >= 100) {
                     tab.isLoading = false
                 }
+
+                // WFPerf Timing log for first progress > 10%
+                if (newProgress > 10 && !tabReportedFirstProgress.contains(tab.id)) {
+                    tabReportedFirstProgress.add(tab.id)
+                    val start = tabNavigationStartTimes[tab.id] ?: 0L
+                    val elapsed = if (start > 0) System.currentTimeMillis() - start else 0L
+                    Log.d(TAG, "First progress above 10% ($newProgress%) for: ${tab.url} in ${elapsed}ms")
+                }
+
+                // Avoid excessive full-screen recompositions: update tab progress directly
                 notifyTabUpdated(tab)
             }
 
@@ -823,8 +952,9 @@ class TabManager(
 
         tab.webView = webView
 
-        // Safe auto-load for restored tabs
+        // Auto-load restored tabs if URL present
         if (tab.url.isNotBlank() && !tab.url.startsWith("about:") && webView.url == null) {
+            tabNavigationStartTimes[tab.id] = System.currentTimeMillis()
             webView.loadUrl(tab.url)
         }
 
@@ -848,6 +978,7 @@ class TabManager(
             allowFileAccess = false
             allowContentAccess = true
             cacheMode = WebSettings.LOAD_DEFAULT
+            loadsImagesAutomatically = true
         }
     }
 
@@ -860,11 +991,14 @@ class TabManager(
         }
     }
 
+    /**
+     * Captures 1/4 resolution thumbnail using RGB_565 to minimize memory usage
+     */
     private fun captureThumbnail(view: WebView?, tab: Tab) {
         if (view == null || view.width <= 0 || view.height <= 0) return
         try {
-            val width = 280
-            val height = 400
+            val width = (view.width / 4).coerceAtLeast(160)
+            val height = (view.height / 4).coerceAtLeast(240)
             val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.RGB_565)
             val canvas = Canvas(bitmap)
             val scaleX = width.toFloat() / view.width.toFloat()
@@ -916,7 +1050,6 @@ class TabManager(
             }
             context.startActivity(intent)
         } catch (e: Exception) {
-            // If app not installed for intent://, try fallback URL if provided
             try {
                 val fallbackUrl = uri.getQueryParameter("browser_fallback_url")
                 if (!fallbackUrl.isNullOrBlank()) {

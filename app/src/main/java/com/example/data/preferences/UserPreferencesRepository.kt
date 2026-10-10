@@ -19,6 +19,16 @@ enum class AddressBarPosition {
     BOTTOM
 }
 
+enum class WallpaperMode {
+    GRADIENT_1,
+    GRADIENT_2,
+    GRADIENT_3,
+    GRADIENT_4,
+    GRADIENT_5,
+    SOLID_COLOR,
+    GALLERY_IMAGE
+}
+
 data class BrowserSettings(
     val themeMode: ThemeMode = ThemeMode.DARK,
     val addressBarPosition: AddressBarPosition = AddressBarPosition.TOP,
@@ -33,7 +43,10 @@ data class BrowserSettings(
     val openLinksInBackground: Boolean = false,
     val blockPopups: Boolean = true,
     val textSizePercent: Int = 100,
-    val trackerBannerDismissed: Boolean = false
+    val trackerBannerDismissed: Boolean = false,
+    val wallpaperMode: WallpaperMode = WallpaperMode.GRADIENT_1,
+    val wallpaperSolidColor: String = "#16171B",
+    val customWallpaperPath: String = ""
 )
 
 class UserPreferencesRepository(private val context: Context) {
@@ -53,11 +66,15 @@ class UserPreferencesRepository(private val context: Context) {
         val BLOCK_POPUPS = booleanPreferencesKey("block_popups")
         val TEXT_SIZE_PERCENT = intPreferencesKey("text_size_percent")
         val TRACKER_BANNER_DISMISSED = booleanPreferencesKey("tracker_banner_dismissed")
+        val WALLPAPER_MODE = stringPreferencesKey("wallpaper_mode")
+        val WALLPAPER_SOLID_COLOR = stringPreferencesKey("wallpaper_solid_color")
+        val CUSTOM_WALLPAPER_PATH = stringPreferencesKey("custom_wallpaper_path")
     }
 
     val settingsFlow: Flow<BrowserSettings> = context.dataStore.data.map { preferences ->
         val themeModeStr = preferences[PreferencesKeys.THEME_MODE] ?: ThemeMode.DARK.name
         val addressBarPosStr = preferences[PreferencesKeys.ADDRESS_BAR_POSITION] ?: AddressBarPosition.TOP.name
+        val wallpaperModeStr = preferences[PreferencesKeys.WALLPAPER_MODE] ?: WallpaperMode.GRADIENT_1.name
 
         BrowserSettings(
             themeMode = try { ThemeMode.valueOf(themeModeStr) } catch (e: Exception) { ThemeMode.DARK },
@@ -73,7 +90,10 @@ class UserPreferencesRepository(private val context: Context) {
             openLinksInBackground = preferences[PreferencesKeys.OPEN_LINKS_IN_BACKGROUND] ?: false,
             blockPopups = preferences[PreferencesKeys.BLOCK_POPUPS] ?: true,
             textSizePercent = preferences[PreferencesKeys.TEXT_SIZE_PERCENT] ?: 100,
-            trackerBannerDismissed = preferences[PreferencesKeys.TRACKER_BANNER_DISMISSED] ?: false
+            trackerBannerDismissed = preferences[PreferencesKeys.TRACKER_BANNER_DISMISSED] ?: false,
+            wallpaperMode = try { WallpaperMode.valueOf(wallpaperModeStr) } catch (e: Exception) { WallpaperMode.GRADIENT_1 },
+            wallpaperSolidColor = preferences[PreferencesKeys.WALLPAPER_SOLID_COLOR] ?: "#16171B",
+            customWallpaperPath = preferences[PreferencesKeys.CUSTOM_WALLPAPER_PATH] ?: ""
         )
     }
 
@@ -158,6 +178,24 @@ class UserPreferencesRepository(private val context: Context) {
     suspend fun setTrackerBannerDismissed(dismissed: Boolean) {
         context.dataStore.edit { preferences ->
             preferences[PreferencesKeys.TRACKER_BANNER_DISMISSED] = dismissed
+        }
+    }
+
+    suspend fun setWallpaperMode(mode: WallpaperMode) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.WALLPAPER_MODE] = mode.name
+        }
+    }
+
+    suspend fun setWallpaperSolidColor(colorHex: String) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.WALLPAPER_SOLID_COLOR] = colorHex
+        }
+    }
+
+    suspend fun setCustomWallpaperPath(path: String) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.CUSTOM_WALLPAPER_PATH] = path
         }
     }
 }

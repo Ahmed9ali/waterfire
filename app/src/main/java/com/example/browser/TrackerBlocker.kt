@@ -1,34 +1,31 @@
 package com.example.browser
 
 import android.content.Context
-import android.net.Uri
 import com.example.R
 import java.io.BufferedReader
 import java.io.InputStreamReader
-import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 
 class TrackerBlocker(context: Context) {
 
-    private val blockedDomains: Set<String>
+    // Fast O(1) HashSet for blocked domains
+    private val blockedDomains: HashSet<String> = HashSet(2500)
     private val pageBlockedTrackerCache = ConcurrentHashMap<String, MutableSet<String>>()
 
     init {
-        val domains = mutableSetOf<String>()
         try {
             val inputStream = context.resources.openRawResource(R.raw.tracker_domains)
-            BufferedReader(InputStreamReader(inputStream)).use { reader ->
+            BufferedReader(InputStreamReader(inputStream), 8192).use { reader ->
                 var line: String?
                 while (reader.readLine().also { line = it } != null) {
                     val trimmed = line?.trim()?.lowercase()
                     if (!trimmed.isNullOrEmpty() && !trimmed.startsWith("#")) {
-                        domains.add(trimmed)
+                        blockedDomains.add(trimmed)
                     }
                 }
             }
         } catch (e: Exception) {
-            // Fallback base trackers
-            domains.addAll(
+            blockedDomains.addAll(
                 listOf(
                     "doubleclick.net", "google-analytics.com", "googlesyndication.com",
                     "criteo.com", "adnxs.com", "facebook.net", "scorecardresearch.com",
@@ -36,23 +33,24 @@ class TrackerBlocker(context: Context) {
                 )
             )
         }
-        blockedDomains = Collections.unmodifiableSet(domains)
     }
 
+    /**
+     * Fast O(1) lookup without Regex or disk access.
+     * Returns the matched tracker root domain or null if allowed.
+     */
     fun isTracker(requestUrl: String, mainPageUrl: String): String? {
-        val requestUri = try { Uri.parse(requestUrl) } catch (e: Exception) { return null }
-        val host = requestUri.host?.lowercase() ?: return null
+        val requestHost = extractHost(requestUrl) ?: return null
+        val pageHost = extractHost(mainPageUrl)
 
-        val pageHost = try { Uri.parse(mainPageUrl).host?.lowercase() } catch (e: Exception) { null }
-
-        // Do not block first-party requests
-        if (pageHost != null && (host == pageHost || host.endsWith(".$pageHost"))) {
+        // Never block first-party requests
+        if (pageHost != null && (requestHost == pageHost || requestHost.endsWith(".$pageHost"))) {
             return null
         }
 
-        // Check host and all parent domains (e.g. ad.doubleclick.net -> doubleclick.net)
-        var currentHost = host
-        while (currentHost.contains(".")) {
+        // Check host and parent domains with simple O(1) HashSet lookups
+        var currentHost = requestHost
+        while (true) {
             if (blockedDomains.contains(currentHost)) {
                 recordBlocked(mainPageUrl, currentHost)
                 return currentHost
@@ -67,7 +65,25 @@ class TrackerBlocker(context: Context) {
         return null
     }
 
+    private fun extractHost(url: String): String? {
+        if (url.isEmpty()) return null
+        val schemeEnd = url.indexOf("://")
+        val start = if (schemeEnd != -1) schemeEnd + 3 else 0
+        if (start >= url.length) return null
+
+        var end = url.indexOf('/', start)
+        if (end == -1) end = url.length
+        val colon = url.indexOf(':', start)
+        if (colon != -1 && colon < end) end = colon
+        val at = url.lastIndexOf('@', end)
+        val hostStart = if (at != -1 && at > start) at + 1 else start
+
+        if (hostStart >= end) return null
+        return url.substring(hostStart, end).lowercase()
+    }
+
     private fun recordBlocked(mainPageUrl: String, trackerDomain: String) {
+        if (mainPageUrl.isBlank()) return
         val set = pageBlockedTrackerCache.computeIfAbsent(mainPageUrl) { ConcurrentHashMap.newKeySet() }
         set.add(trackerDomain)
     }

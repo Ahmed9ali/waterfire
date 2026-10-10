@@ -448,11 +448,31 @@
         });
     };
 
-    // Debounced scan observer
+    // Debounced, lightweight idle scan observer capped per page load
     let scanTimer = null;
+    let scanCount = 0;
+    const MAX_PAGE_SCANS = 8;
+    const scheduleIdle = (typeof window.requestIdleCallback === 'function') 
+        ? window.requestIdleCallback 
+        : function(cb) { return setTimeout(cb, 16); };
+
+    function runLightweightScan() {
+        if (scanCount >= MAX_PAGE_SCANS) return;
+        // Stop scanning pages with more than 5,000 DOM nodes to prevent CPU spikes
+        try {
+            if (document.getElementsByTagName('*').length > 5000) return;
+        } catch (e) {}
+
+        scheduleIdle(function() {
+            scanCount++;
+            scanPageForForms();
+        });
+    }
+
     function scheduleScan() {
+        if (scanCount >= MAX_PAGE_SCANS) return;
         if (scanTimer) clearTimeout(scanTimer);
-        scanTimer = setTimeout(scanPageForForms, 400);
+        scanTimer = setTimeout(runLightweightScan, 350);
     }
 
     const observer = new MutationObserver(function() {
@@ -471,6 +491,5 @@
     }
 
     scheduleScan();
-    setTimeout(scheduleScan, 1000);
-    setTimeout(scheduleScan, 3000);
+    setTimeout(scheduleScan, 1200);
 })();

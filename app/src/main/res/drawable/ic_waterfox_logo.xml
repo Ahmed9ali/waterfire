@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="96dp"
+    android:height="96dp"
+    android:viewportWidth="96"
+    android:viewportHeight="96">
+
+    <!-- Fox Head Silhouette & Ears (Vibrant Orange Gradient Base #FF6D00 / #DE5833) -->
+    <!-- Left Ear Outer -->
+    <path
+        android:fillColor="#FF6D00"
+        android:pathData="M20,14L40,32L26,44Z" />
+
+    <!-- Right Ear Outer -->
+    <path
+        android:fillColor="#DE5833"
+        android:pathData="M76,14L70,44L56,32Z" />
+
+    <!-- Left Ear Inner Dark Accent -->
+    <path
+        android:fillColor="#C43D1A"
+        android:pathData="M24,20L36,32L28,40Z" />
+
+    <!-- Right Ear Inner Dark Accent -->
+    <path
+        android:fillColor="#BF360C"
+        android:pathData="M72,20L68,40L60,32Z" />
+
+    <!-- Fox Face Main Shield (Orange #FF6D00) -->
+    <path
+        android:fillColor="#FF6D00"
+        android:pathData="M26,44L48,26L70,44L72,62L48,86L24,62Z" />
+
+    <!-- Fox Cheek White Flares (Left & Right) -->
+    <path
+        android:fillColor="#FFF3E0"
+        android:pathData="M26,44L38,58L34,68L24,62Z" />
+    <path
+        android:fillColor="#FFF3E0"
+        android:pathData="M70,44L72,62L62,68L58,58Z" />
+
+    <!-- Fox Forehead Central Plate (#E64A19) -->
+    <path
+        android:fillColor="#E64A19"
+        android:pathData="M38,36L48,28L58,36L56,52L48,58L40,52Z" />
+
+    <!-- Water Drop in the Center (Cool Aqua / Water Blue #00E5FF / #00B0FF) -->
+    <path
+        android:fillColor="#00E5FF"
+        android:pathData="M48,34C48,34 42,42 42,47C42,50.3 44.7,53 48,53C51.3,53 54,50.3 54,47C54,42 48,34 48,34Z" />
+
+    <!-- Water Drop Gleam / Reflection -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M46.5,43C45.5,44.5 45,46 45,47.5C45,48.5 45.8,49.5 46.8,49.5C46.2,48.5 46,47 46.5,45.5C46.8,44.5 47.5,43.5 48,43L46.5,43Z" />
+
+    <!-- Fox Sleek Eyes -->
+    <path
+        android:fillColor="#212121"
+        android:pathData="M34,50L44,53L36,56Z" />
+    <path
+        android:fillColor="#212121"
+        android:pathData="M62,50L60,56L52,53Z" />
+
+    <!-- Fox Snout & Nose (#D84315 & Dark Tip #212121) -->
+    <path
+        android:fillColor="#E64A19"
+        android:pathData="M40,64L48,60L56,64L48,78Z" />
+    <path
+        android:fillColor="#212121"
+        android:pathData="M45,74L48,71L51,74L48,77Z" />
+</vector>
