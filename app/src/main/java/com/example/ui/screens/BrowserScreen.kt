@@ -11,6 +11,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -81,6 +82,7 @@ import com.example.ui.components.Omnibar
 import com.example.ui.components.PrivacyShieldSheet
 import com.example.ui.components.SearchSuggestionsList
 import com.example.ui.components.WallpaperBackground
+import com.example.ui.components.rememberFavicon
 import com.example.ui.theme.BrandOrange
 import com.example.ui.theme.PrivateAccent
 import com.example.ui.theme.PrivateBackground
@@ -791,14 +793,14 @@ private fun BraveHomePage(
             // 2. Shortcut Tray at Top of content (Rounded card 20dp, 40% translucent black, 8dp side margin)
             Surface(
                 shape = RoundedCornerShape(20.dp),
-                color = Color.Black.copy(alpha = 0.40f),
+                color = Color(0xFF2B2B2E).copy(alpha = 0.78f),
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 4.dp)
             ) {
                 LazyRow(
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 14.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     items(favorites, key = { it.id }) { favorite ->
@@ -867,55 +869,63 @@ private fun FavoriteTile(
         cleanFavoriteLabel(favorite.title, favorite.url)
     }
 
-    // Favicon URL via Google Favicon service or direct host icon
     val host = remember(favorite.url) {
         try { Uri.parse(favorite.url).host ?: "" } catch (e: Exception) { "" }
     }
-    val faviconUrl = if (host.isNotBlank()) "https://www.google.com/s2/favicons?domain=$host&sz=128" else null
+    val favicon = rememberFavicon(host)
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
-            .width(96.dp)
-            .clip(RoundedCornerShape(14.dp))
+            .width(72.dp)
+            .clip(RoundedCornerShape(12.dp))
             .pointerInput(favorite.id) {
                 detectTapGestures(
                     onTap = { onTap() },
                     onLongPress = { onLongPress() }
                 )
             }
-            .padding(vertical = 4.dp)
+            .padding(vertical = 2.dp)
             .testTag("shortcut_tile_${favorite.title}")
     ) {
-        // 64dp circle containing site's initial or bookmark icon
+        // 48dp circle with the site's icon (letter fallback)
         Box(
             modifier = Modifier
-                .size(64.dp)
+                .size(48.dp)
                 .clip(CircleShape)
-                .background(Color.Black.copy(alpha = 0.35f)),
+                .background(Color(0xFF2A2A2D)),
             contentAlignment = Alignment.Center
         ) {
-            val letter = cleanLabel.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "W"
-            Text(
-                text = letter,
-                fontSize = 24.sp,
-                fontWeight = FontWeight.Bold,
-                color = BrandOrange
-            )
+            if (favicon != null) {
+                Image(
+                    bitmap = favicon,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                )
+            } else {
+                val letter = cleanLabel.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "W"
+                Text(
+                    text = letter,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = BrandOrange
+                )
+            }
         }
 
         Spacer(modifier = Modifier.height(6.dp))
 
-        // 13sp white label below, one line, ellipsized
         Text(
             text = cleanLabel,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.Medium,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Normal,
             color = Color.White,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.Center,
-            modifier = Modifier.padding(horizontal = 4.dp)
+            modifier = Modifier.padding(horizontal = 2.dp)
         )
     }
 }
@@ -925,24 +935,24 @@ private fun AddFavoriteTile(onClick: () -> Unit) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
-            .width(96.dp)
-            .clip(RoundedCornerShape(14.dp))
+            .width(72.dp)
+            .clip(RoundedCornerShape(12.dp))
             .clickable(onClick = onClick)
-            .padding(vertical = 4.dp)
+            .padding(vertical = 2.dp)
             .testTag("shortcut_tile_add")
     ) {
         Box(
             modifier = Modifier
-                .size(64.dp)
+                .size(48.dp)
                 .clip(CircleShape)
-                .background(Color.White.copy(alpha = 0.18f)),
+                .background(Color(0xFF2A2A2D)),
             contentAlignment = Alignment.Center
         ) {
             Icon(
                 painter = painterResource(id = R.drawable.ic_add),
                 contentDescription = "Add favorite",
                 tint = Color.White,
-                modifier = Modifier.size(28.dp)
+                modifier = Modifier.size(22.dp)
             )
         }
 
@@ -950,8 +960,8 @@ private fun AddFavoriteTile(onClick: () -> Unit) {
 
         Text(
             text = "Add",
-            fontSize = 13.sp,
-            fontWeight = FontWeight.Medium,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Normal,
             color = Color.White,
             maxLines = 1,
             textAlign = TextAlign.Center

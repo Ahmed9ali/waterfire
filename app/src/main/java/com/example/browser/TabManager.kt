@@ -72,6 +72,10 @@ class TabManager(
     // Last progress value that was pushed to the UI for each tab (throttling)
     private val lastProgressNotify = HashMap<String, Int>()
 
+    // Tabs that started loading while the home screen was showing. The home screen stays
+    // visible until the new page actually paints, so the previous page never flashes.
+    private val pendingHomeExit = HashSet<String>()
+
     // Recently closed tabs (up to 10)
     private val _recentlyClosedTabs = MutableStateFlow<List<ClosedTabInfo>>(emptyList())
     val recentlyClosedTabs: StateFlow<List<ClosedTabInfo>> = _recentlyClosedTabs.asStateFlow()
@@ -478,7 +482,13 @@ class TabManager(
 
         tab.url = processedUrl
         tab.title = "Loading…"
-        tab.showHome = false
+        if (tab.showHome) {
+            // Coming from the home screen: the WebView may still hold the previous page,
+            // so keep home visible until the new page paints (see onPageCommitVisible).
+            pendingHomeExit.add(tab.id)
+        } else {
+            tab.showHome = false
+        }
         tab.isHttps = processedUrl.startsWith("https://")
         tab.hasSslError = false
         tab.hasCrashError = false
@@ -567,6 +577,7 @@ class TabManager(
 
     fun showHomeInCurrentTab() {
         val tab = getCurrentTab() ?: return
+        pendingHomeExit.remove(tab.id)
         if (!tab.showHome) {
             tab.showHome = true
             notifyTabUpdated(tab)
@@ -761,6 +772,7 @@ class TabManager(
                 // does not compete with the page's first render
                 view?.postDelayed({ captureThumbnail(view, tab) }, 1500)
 
+                leaveHomeIfPending(tab)
                 notifyTabUpdated(tab)
 
                 // Persist to Room History and TabEntity throttled on page completion
@@ -797,6 +809,11 @@ class TabManager(
                 }
             }
 
+            override fun onPageCommitVisible(view: WebView?, url: String?) {
+                super.onPageCommitVisible(view, url)
+                leaveHomeIfPending(tab)
+            }
+
             override fun onReceivedSslError(view: WebView?, handler: SslErrorHandler?, error: SslError?) {
                 tab.hasSslError = true
                 notifyTabUpdated(tab)
@@ -812,6 +829,7 @@ class TabManager(
                 super.onReceivedError(view, request, error)
                 if (request?.isForMainFrame == true) {
                     tab.isLoading = false
+                    leaveHomeIfPending(tab)
                     notifyTabUpdated(tab)
                 }
             }
@@ -1110,5 +1128,16 @@ class TabManager(
      */
     private fun notifyTabUpdated(@Suppress("UNUSED_PARAMETER") tab: Tab) {
         _tabsVersion.update { it + 1 }
+    }
+
+    /**
+     * If this tab started loading from the home screen, hide home now that the new page
+     * has painted (or finished / failed), so the old page is never shown in between.
+     */
+    private fun leaveHomeIfPending(tab: Tab) {
+        if (pendingHomeExit.remove(tab.id)) {
+            tab.showHome = false
+            notifyTabUpdated(tab)
+        }
     }
 }

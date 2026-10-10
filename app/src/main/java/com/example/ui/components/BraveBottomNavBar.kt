@@ -98,7 +98,7 @@ fun BraveBottomNavBar(
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    painter = painterResource(id = R.drawable.ic_home),
+                    imageVector = AppIcons.Home,
                     contentDescription = "Home",
                     tint = iconTint,
                     modifier = Modifier.size(24.dp)
@@ -123,7 +123,7 @@ fun BraveBottomNavBar(
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    painter = painterResource(id = R.drawable.ic_bookmark),
+                    imageVector = if (isCurrentPageBookmarked) AppIcons.BookmarkCheck else AppIcons.Bookmark,
                     contentDescription = "Bookmarks",
                     tint = iconTint,
                     modifier = Modifier.size(24.dp)
@@ -152,7 +152,7 @@ fun BraveBottomNavBar(
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    painter = painterResource(id = R.drawable.ic_search),
+                    imageVector = AppIcons.Search,
                     contentDescription = "Search",
                     tint = iconTint,
                     modifier = Modifier.size(24.dp)
@@ -214,7 +214,7 @@ fun BraveBottomNavBar(
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    painter = painterResource(id = R.drawable.ic_more_vert),
+                    imageVector = AppIcons.MoreVert,
                     contentDescription = "Menu",
                     tint = iconTint,
                     modifier = Modifier.size(24.dp)
