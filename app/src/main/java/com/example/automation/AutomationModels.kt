@@ -1,0 +1,58 @@
+package com.example.automation
+
+import java.util.UUID
+
+enum class UsageMode(val displayName: String) {
+    SEQUENTIAL_TOP("From top (sequential)"),
+    SEQUENTIAL_BOTTOM("From bottom (reverse)"),
+    RANDOM("Random"),
+    RANDOM_WITHOUT_REPEAT("Random without repeat"),
+    MANUAL("Manual (pick each time)")
+}
+
+data class AutomationSettings(
+    val detectionEnabled: Boolean = true,
+    val showOmnibarIcon: Boolean = true,
+    val highlightFilledFields: Boolean = true,
+    val autoSubmitAfterFilling: Boolean = false,
+    val disabledSites: Set<String> = emptySet(),
+    val biometricLockEnabled: Boolean = false
+)
+
+data class Dataset(
+    val id: String = UUID.randomUUID().toString(),
+    val name: String,
+    val sourceFileName: String,
+    val usageMode: UsageMode = UsageMode.SEQUENTIAL_TOP,
+    val skipAlreadyUsed: Boolean = false,
+    val deleteAfterUse: Boolean = false,
+    val loopBackToStart: Boolean = true,
+    val markAsUsedOnSubmit: Boolean = false, // false = when filled, true = only after form is submitted
+    val currentIndex: Int = 0,
+    val isActive: Boolean = false,
+    val createdAt: Long = System.currentTimeMillis()
+)
+
+data class DatasetRecord(
+    val id: String = UUID.randomUUID().toString(),
+    val datasetId: String,
+    val fields: Map<String, String>, // normalized field key -> value
+    val isUsed: Boolean = false,
+    val orderIndex: Int = 0
+)
+
+data class DetectedColumn(
+    val rawKey: String,
+    val normalizedType: String, // e.g. "email", "password", "first_name", "custom"
+    val sampleValues: List<String>,
+    val confidence: Float = 1.0f,
+    val isIgnored: Boolean = false
+)
+
+data class FileAnalysisResult(
+    val detectedColumns: List<DetectedColumn>,
+    val records: List<Map<String, String>>,
+    val totalLines: Int,
+    val validRecordCount: Int,
+    val skippedLinesCount: Int
+)

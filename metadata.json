@@ -1,0 +1,8 @@
+{
+  "name": "WaterFox",
+  "description": "Fast, privacy-focused browser inspired by DuckDuckGo Privacy Browser with tracker blocking, fire button, tabs, and local data protection.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

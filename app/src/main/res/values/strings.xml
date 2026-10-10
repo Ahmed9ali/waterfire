@@ -1,0 +1,13 @@
+<resources>
+    <string name="app_name">WaterFox</string>
+    <string name="search_hint">Search or enter address</string>
+    <string name="privacy_shield">Privacy Protection</string>
+    <string name="delete_tabs_title">Delete tabs and site data?</string>
+    <string name="delete_this_tab">Delete This Tab</string>
+    <string name="delete_all">Delete All</string>
+    <string name="automation">Automation</string>
+    <string name="automation_desc">Smart form filler driven by uploaded data</string>
+    <string name="upload_file">Upload file</string>
+    <string name="paste_text">Paste text</string>
+    <string name="test_sample_form">Test on sample form</string>
+</resources>

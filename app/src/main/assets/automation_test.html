@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WaterFox Automation Test Bed</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: #1A1A1A;
+            color: #F0F0F0;
+            padding: 16px;
+            margin: 0;
+            line-height: 1.5;
+        }
+        h1 { color: #DE5833; font-size: 22px; margin-bottom: 6px; }
+        p.subtitle { color: #A0A0A0; font-size: 13px; margin-bottom: 20px; }
+        .card {
+            background: #262626;
+            border-radius: 12px;
+            padding: 18px;
+            margin-bottom: 18px;
+            border: 1px solid #383838;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        }
+        .card h2 { margin-top: 0; font-size: 16px; color: #FFFFFF; border-bottom: 1px solid #383838; padding-bottom: 8px; }
+        .form-group { margin-bottom: 12px; }
+        label { display: block; font-size: 12px; font-weight: 600; color: #BBBBBB; margin-bottom: 4px; }
+        input[type="text"], input[type="email"], input[type="password"], input[type="tel"], input[type="date"], textarea, select {
+            width: 100%;
+            padding: 9px 11px;
+            box-sizing: border-box;
+            background: #141414;
+            border: 1px solid #444444;
+            border-radius: 8px;
+            color: #FFFFFF;
+            font-size: 14px;
+        }
+        input:focus, textarea:focus, select:focus {
+            border-color: #DE5833;
+            outline: none;
+        }
+        .btn {
+            background-color: #DE5833;
+            color: white;
+            border: none;
+            padding: 9px 16px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-top: 6px;
+        }
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .honeypot { display: none !important; opacity: 0; position: absolute; left: -9999px; }
+        .checkbox-label { display: flex; align-items: center; font-size: 13px; color: #CCCCCC; cursor: pointer; }
+        .checkbox-label input { width: auto; margin-right: 8px; }
+        [contenteditable="true"] {
+            min-height: 40px;
+            background: #141414;
+            border: 1px solid #444444;
+            border-radius: 8px;
+            padding: 8px 10px;
+            color: #FFFFFF;
+        }
+    </style>
+</head>
+<body>
+    <h1>WaterFox Automation Test</h1>
+    <p class="subtitle">Interactive test bed verifying form detection, React/Vue simulation, and 1-tap dataset filling.</p>
+
+    <!-- Global search bar (must be IGNORED by automation detection) -->
+    <div style="margin-bottom: 16px;">
+        <input type="search" name="q" placeholder="Site search bar (ignored)..." role="search">
+    </div>
+
+    <!-- 1. Sign-up Form -->
+    <div class="card">
+        <h2>1. Sign-Up Form</h2>
+        <form id="signup-form">
+            <!-- Hidden honeypot field (must be IGNORED) -->
+            <input type="text" name="hp_field" class="honeypot" tabindex="-1" aria-hidden="true" autocomplete="off">
+
+            <div class="grid-2">
+                <div class="form-group">
+                    <label for="first_name">First Name</label>
+                    <input type="text" id="first_name" name="first_name" placeholder="John" autocomplete="given-name">
+                </div>
+                <div class="form-group">
+                    <label for="last_name">Last Name</label>
+                    <input type="text" id="last_name" name="last_name" placeholder="Doe" autocomplete="family-name">
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="signup_email">Email Address</label>
+                <input type="email" id="signup_email" name="email" placeholder="john@example.com" autocomplete="email">
+            </div>
+            <div class="form-group">
+                <label for="confirm_email">Confirm Email</label>
+                <input type="email" id="confirm_email" name="confirm_email" placeholder="john@example.com">
+            </div>
+            <div class="form-group">
+                <label for="signup_username">Username</label>
+                <input type="text" id="signup_username" name="username" placeholder="johndoe" autocomplete="username">
+            </div>
+            <div class="grid-2">
+                <div class="form-group">
+                    <label for="signup_password">Password</label>
+                    <input type="password" id="signup_password" name="password" placeholder="••••••••" autocomplete="new-password">
+                </div>
+                <div class="form-group">
+                    <label for="confirm_password">Confirm Password</label>
+                    <input type="password" id="confirm_password" name="confirm_password" placeholder="••••••••">
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="checkbox-label">
+                    <input type="checkbox" id="terms" name="terms"> I agree to the Terms of Service
+                </label>
+            </div>
+            <button type="submit" class="btn">Create Account</button>
+        </form>
+    </div>
+
+    <!-- 2. Login Form -->
+    <div class="card">
+        <h2>2. Login Form</h2>
+        <form id="login-form">
+            <div class="form-group">
+                <label for="login_user">Username or Email</label>
+                <input type="text" id="login_user" name="login_user" placeholder="Enter username or email" autocomplete="username">
+            </div>
+            <div class="form-group">
+                <label for="login_pass">Password</label>
+                <input type="password" id="login_pass" name="login_pass" placeholder="Enter password" autocomplete="current-password">
+            </div>
+            <button type="submit" class="btn">Sign In</button>
+        </form>
+    </div>
+
+    <!-- 3. Contact & Feedback Form -->
+    <div class="card">
+        <h2>3. Contact & Feedback Form</h2>
+        <form id="contact-form">
+            <div class="form-group">
+                <label for="contact_name">Full Name</label>
+                <input type="text" id="contact_name" name="name" placeholder="Jane Doe">
+            </div>
+            <div class="grid-2">
+                <div class="form-group">
+                    <label for="contact_email">Email</label>
+                    <input type="email" id="contact_email" name="email" placeholder="jane@example.com">
+                </div>
+                <div class="form-group">
+                    <label for="contact_phone">Phone Number</label>
+                    <input type="tel" id="contact_phone" name="phone" placeholder="+1 (555) 000-0000" autocomplete="tel">
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="contact_subject">Subject</label>
+                <input type="text" id="contact_subject" name="subject" placeholder="Feedback on browser">
+            </div>
+            <div class="form-group">
+                <label for="contact_message">Message</label>
+                <textarea id="contact_message" name="message" rows="3" placeholder="Type your message here..."></textarea>
+            </div>
+            <button type="submit" class="btn">Send Feedback</button>
+        </form>
+    </div>
+
+    <!-- 4. Profile & Address (Formless & Dropdowns) -->
+    <div class="card">
+        <h2>4. Profile & Address (Formless Inputs)</h2>
+        <div>
+            <div class="form-group">
+                <label for="address_1">Address Line 1</label>
+                <input type="text" id="address_1" name="address_line_1" placeholder="123 Main Street" autocomplete="address-line1">
+            </div>
+            <div class="grid-2">
+                <div class="form-group">
+                    <label for="city">City</label>
+                    <input type="text" id="city" name="city" placeholder="San Francisco">
+                </div>
+                <div class="form-group">
+                    <label for="zip_code">ZIP Code</label>
+                    <input type="text" id="zip_code" name="zip_code" placeholder="94105" autocomplete="postal-code">
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="country">Country</label>
+                <select id="country" name="country">
+                    <option value="">Select country...</option>
+                    <option value="US">United States</option>
+                    <option value="CA">Canada</option>
+                    <option value="GB">United Kingdom</option>
+                    <option value="DE">Germany</option>
+                    <option value="FR">France</option>
+                </select>
+            </div>
+            <div class="grid-2">
+                <div class="form-group">
+                    <label for="dob">Date of Birth</label>
+                    <input type="date" id="dob" name="date_of_birth">
+                </div>
+                <div class="form-group">
+                    <label for="website">Website</label>
+                    <input type="text" id="website" name="website" placeholder="https://example.com">
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="sec_q">Security Question</label>
+                <input type="text" id="sec_q" name="security_question" placeholder="What is your pet's name?">
+            </div>
+            <div class="form-group">
+                <label for="sec_a">Security Answer</label>
+                <input type="text" id="sec_a" name="security_answer" placeholder="Your answer">
+            </div>
+            <div class="form-group">
+                <label>Editable Bio (contenteditable)</label>
+                <div contenteditable="true" id="bio" placeholder="Tell us about yourself..."></div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
