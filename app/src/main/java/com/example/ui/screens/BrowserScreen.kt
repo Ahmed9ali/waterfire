@@ -100,9 +100,15 @@ fun BrowserScreen(viewModel: BrowserViewModel) {
     val privateTabs by viewModel.tabManager.privateTabs.collectAsState()
     val currentTabId by viewModel.tabManager.currentTabId.collectAsState()
     val isPrivateMode by viewModel.tabManager.isPrivateMode.collectAsState()
+    // Observed so the screen recomposes whenever a tab's fields change in place
+    // (showHome, isLoading, progress, url, title, ...). Without this the Home button
+    // and the loading bar never redraw.
+    val tabsVersion by viewModel.tabManager.tabsVersion.collectAsState()
     val settings by viewModel.settings.collectAsState()
 
-    val currentTab = viewModel.tabManager.getCurrentTab()
+    val currentTab = remember(tabsVersion, currentTabId, isPrivateMode, normalTabs, privateTabs) {
+        viewModel.tabManager.getCurrentTab()
+    }
 
     val totalTabsCount = if (isPrivateMode) privateTabs.size else normalTabs.size
     val omnibarText by viewModel.omnibarInput.collectAsState()

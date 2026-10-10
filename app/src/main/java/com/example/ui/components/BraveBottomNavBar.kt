@@ -88,16 +88,12 @@ fun BraveBottomNavBar(
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // 1. Home
+            // 1. Home (default ripple so taps give visible feedback)
             Box(
                 modifier = Modifier
                     .weight(1f)
                     .height(56.dp)
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = onHomeClick
-                    )
+                    .clickable(onClick = onHomeClick)
                     .testTag("brave_nav_home"),
                 contentAlignment = Alignment.Center
             ) {
@@ -151,11 +147,7 @@ fun BraveBottomNavBar(
                 modifier = Modifier
                     .weight(1f)
                     .height(56.dp)
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = onSearchClick
-                    )
+                    .clickable(onClick = onSearchClick)
                     .testTag("brave_nav_search"),
                 contentAlignment = Alignment.Center
             ) {
@@ -217,11 +209,7 @@ fun BraveBottomNavBar(
                 modifier = Modifier
                     .weight(1f)
                     .height(56.dp)
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = onMenuClick
-                    )
+                    .clickable(onClick = onMenuClick)
                     .testTag("brave_nav_menu"),
                 contentAlignment = Alignment.Center
             ) {

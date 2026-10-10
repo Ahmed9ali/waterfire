@@ -93,8 +93,9 @@ fun Omnibar(
         mutableStateOf(TextFieldValue(text = inputText, selection = TextRange(inputText.length)))
     }
 
-    // Keep internal text state in sync when not focused or when inputText changes externally
-    LaunchedEffect(inputText, isFocused) {
+    // Keep internal text state in sync when not focused or when inputText changes externally.
+    // url and isHomePage are keys so the displayed host updates when the page changes.
+    LaunchedEffect(inputText, isFocused, url, isHomePage) {
         if (!isFocused) {
             val display = if (isHomePage || url.isBlank() || url.startsWith("about:")) "" else {
                 try {
@@ -349,15 +350,16 @@ fun Omnibar(
             }
         }
 
-        // Thin Firefox-style loading bar directly under top bar
-        if (isLoading && progress in 1..99) {
+        // Thin Firefox-style loading bar directly under top bar.
+        // Shows as soon as loading starts (minimum 8%) and animates smoothly.
+        if (isLoading) {
             val animatedProgress by animateFloatAsState(
-                targetValue = progress / 100f,
+                targetValue = maxOf(progress, 8) / 100f,
                 label = "progress_bar_anim"
             )
             Box(
                 modifier = Modifier
-                    .fillMaxWidth(animatedProgress)
+                    .fillMaxWidth(animatedProgress.coerceIn(0f, 1f))
                     .height(2.5.dp)
                     .background(
                         Brush.horizontalGradient(

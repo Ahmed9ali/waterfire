@@ -14,6 +14,7 @@ import androidx.activity.viewModels
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -205,9 +206,19 @@ fun MainContent(viewModel: BrowserViewModel) {
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { innerPadding ->
         Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
+            // BrowserScreen applies status bar / navigation bar insets itself
+            // (statusBarsPadding on the omnibar, navigationBarsPadding on the bottom bar).
+            // Applying Scaffold's innerPadding as well would add the insets twice,
+            // which is what pushed the address bar far below the status bar.
+            modifier = if (currentScreen == AppScreen.BROWSER && !showSplash) {
+                Modifier
+                    .fillMaxSize()
+                    .imePadding()
+            } else {
+                Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+            }
         ) {
             if (showSplash) {
                 SplashScreen(onSplashFinished = { showSplash = false })

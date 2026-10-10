@@ -39,6 +39,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.ByteArrayInputStream
 import java.io.File
@@ -62,6 +63,14 @@ class TabManager(
 
     private val _isPrivateMode = MutableStateFlow(false)
     val isPrivateMode: StateFlow<Boolean> = _isPrivateMode.asStateFlow()
+
+    // Bumped every time a tab's fields change in place (showHome, isLoading, progress,
+    // url, title...). The UI observes this so it recomposes when a tab object is mutated.
+    private val _tabsVersion = MutableStateFlow(0)
+    val tabsVersion: StateFlow<Int> = _tabsVersion.asStateFlow()
+
+    // Last progress value that was pushed to the UI for each tab (throttling)
+    private val lastProgressNotify = HashMap<String, Int>()
 
     // Recently closed tabs (up to 10)
     private val _recentlyClosedTabs = MutableStateFlow<List<ClosedTabInfo>>(emptyList())
@@ -284,9 +293,11 @@ class TabManager(
             }
         }
 
-        // Lazy creation: only instantiate WebView if there's an actual URL to load
+        // Lazy creation: only instantiate WebView if there's an actual URL to load.
+        // autoLoad = false because loadUrlInTab below loads the processed URL; letting
+        // getOrCreateWebView also load the raw text made every new tab load twice.
         if (initialUrl.isNotBlank()) {
-            getOrCreateWebView(newTab)
+            getOrCreateWebView(newTab, autoLoad = false)
             loadUrlInTab(newTab, initialUrl)
         }
 
@@ -305,6 +316,7 @@ class TabManager(
             }
             val remaining = _privateTabs.value.filter { it.id != id }
             _privateTabs.value = remaining
+            lastProgressNotify.remove(id)
             if (_currentTabId.value == id) {
                 if (remaining.isNotEmpty()) {
                     _currentTabId.value = remaining.last().id
@@ -327,6 +339,7 @@ class TabManager(
             }
             val remaining = _normalTabs.value.filter { it.id != id }
             _normalTabs.value = remaining
+            lastProgressNotify.remove(id)
 
             scope.launch(Dispatchers.IO) {
                 database.tabDao().deleteTabById(id)
@@ -375,6 +388,7 @@ class TabManager(
             _normalTabs.value.forEach { destroyTabWebView(it) }
             _privateTabs.value = emptyList()
             _normalTabs.value = emptyList()
+            lastProgressNotify.clear()
 
             scope.launch(Dispatchers.IO) {
                 database.tabDao().deleteAllTabs()
@@ -395,6 +409,7 @@ class TabManager(
             _normalTabs.value.forEach { destroyTabWebView(it) }
             _privateTabs.value = emptyList()
             _normalTabs.value = emptyList()
+            lastProgressNotify.clear()
 
             CookieManager.getInstance().removeAllCookies(null)
             CookieManager.getInstance().flush()
@@ -469,6 +484,11 @@ class TabManager(
         tab.hasCrashError = false
         tab.crashRecoveryAttempts = 0
 
+        // Show the loading bar immediately instead of waiting for onPageStarted
+        tab.isLoading = true
+        tab.progress = 5
+        lastProgressNotify[tab.id] = 0
+
         // Timing log (WFPerf)
         tabNavigationStartTimes[tab.id] = System.currentTimeMillis()
         tabReportedFirstProgress.remove(tab.id)
@@ -476,7 +496,7 @@ class TabManager(
 
         notifyTabUpdated(tab)
 
-        val webView = getOrCreateWebView(tab)
+        val webView = getOrCreateWebView(tab, autoLoad = false)
         webView.loadUrl(processedUrl)
     }
 
@@ -493,13 +513,13 @@ class TabManager(
             try {
                 wv.reload()
             } catch (e: Exception) {
-                val newWv = getOrCreateWebView(tab)
+                val newWv = getOrCreateWebView(tab, autoLoad = false)
                 newWv.loadUrl(currentUrl)
             }
         } else if (currentUrl.isNotBlank()) {
             tabNavigationStartTimes[tab.id] = System.currentTimeMillis()
             tabReportedFirstProgress.remove(tab.id)
-            val newWv = getOrCreateWebView(tab)
+            val newWv = getOrCreateWebView(tab, autoLoad = false)
             newWv.loadUrl(currentUrl)
         }
         notifyTabUpdated(tab)
@@ -539,7 +559,7 @@ class TabManager(
     fun toggleDesktopModeForCurrentTab() {
         val tab = getCurrentTab() ?: return
         tab.isDesktopMode = !tab.isDesktopMode
-        val webView = getOrCreateWebView(tab)
+        val webView = getOrCreateWebView(tab, autoLoad = false)
         webView.settings.userAgentString = if (tab.isDesktopMode) DESKTOP_USER_AGENT else MOBILE_USER_AGENT
         webView.reload()
         notifyTabUpdated(tab)
@@ -580,7 +600,7 @@ class TabManager(
     }
 
     @SuppressLint("SetJavaScriptEnabled")
-    fun getOrCreateWebView(tab: Tab, customContext: Context? = null): WebView {
+    fun getOrCreateWebView(tab: Tab, customContext: Context? = null, autoLoad: Boolean = true): WebView {
         if (tab.webView != null) {
             return tab.webView!!
         }
@@ -696,11 +716,16 @@ class TabManager(
                 tab.isHttps = currentUrl.startsWith("https://")
                 tab.canGoBack = view?.canGoBack() == true
                 tab.canGoForward = view?.canGoForward() == true
+                lastProgressNotify[tab.id] = 0
                 notifyTabUpdated(tab)
 
-                try {
-                    view?.evaluateJavascript(WEBGL_SAFE_SCRIPT, null)
-                } catch (e: Exception) {}
+                // document_start injection already covers this on modern WebViews;
+                // only fall back to evaluateJavascript when it is not supported.
+                if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+                    try {
+                        view?.evaluateJavascript(WEBGL_SAFE_SCRIPT, null)
+                    } catch (e: Exception) {}
+                }
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
@@ -715,6 +740,7 @@ class TabManager(
                 tab.isHttps = currentUrl.startsWith("https://")
                 tab.hasCrashError = false
                 tab.crashRecoveryAttempts = 0
+                lastProgressNotify[tab.id] = 0
 
                 // WFPerf Timing log
                 val start = tabNavigationStartTimes[tab.id] ?: 0L
@@ -731,8 +757,9 @@ class TabManager(
                     } catch (e: Exception) {}
                 }
 
-                // Capture downsampled thumbnail safely off critical path
-                captureThumbnail(view, tab)
+                // Capture the thumbnail a little later so drawing the WebView
+                // does not compete with the page's first render
+                view?.postDelayed({ captureThumbnail(view, tab) }, 1500)
 
                 notifyTabUpdated(tab)
 
@@ -814,7 +841,7 @@ class TabManager(
                     tab.hasCrashError = false
                     notifyTabUpdated(tab)
                     scope.launch(Dispatchers.Main) {
-                        val restoredWebView = getOrCreateWebView(tab, activityContext)
+                        val restoredWebView = getOrCreateWebView(tab, activityContext, autoLoad = false)
                         restoredWebView.loadUrl(currentUrl)
                     }
                 } else {
@@ -843,8 +870,14 @@ class TabManager(
                     Log.d(TAG, "First progress above 10% ($newProgress%) for: ${tab.url} in ${elapsed}ms")
                 }
 
-                // Avoid excessive full-screen recompositions: update tab progress directly
-                notifyTabUpdated(tab)
+                // Only push to the UI every 10% (and on reset / completion). The progress bar
+                // animates between steps, and this avoids recomposing the whole screen on
+                // every progress tick while the page is loading.
+                val last = lastProgressNotify[tab.id] ?: 0
+                if (newProgress >= 100 || newProgress < last || newProgress - last >= 10) {
+                    lastProgressNotify[tab.id] = newProgress
+                    notifyTabUpdated(tab)
+                }
             }
 
             override fun onReceivedTitle(view: WebView?, title: String?) {
@@ -857,7 +890,7 @@ class TabManager(
 
             override fun onCreateWindow(view: WebView?, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message?): Boolean {
                 val newTab = createNewTab(isPrivate = tab.isPrivate, openInBackground = currentSettings.openLinksInBackground)
-                val newWebView = getOrCreateWebView(newTab)
+                val newWebView = getOrCreateWebView(newTab, autoLoad = false)
                 val transport = resultMsg?.obj as? WebView.WebViewTransport
                 transport?.webView = newWebView
                 resultMsg?.sendToTarget()
@@ -952,8 +985,8 @@ class TabManager(
 
         tab.webView = webView
 
-        // Auto-load restored tabs if URL present
-        if (tab.url.isNotBlank() && !tab.url.startsWith("about:") && webView.url == null) {
+        // Auto-load restored tabs if URL present (skipped when the caller loads a URL itself)
+        if (autoLoad && tab.url.isNotBlank() && !tab.url.startsWith("about:") && webView.url == null) {
             tabNavigationStartTimes[tab.id] = System.currentTimeMillis()
             webView.loadUrl(tab.url)
         }
@@ -972,7 +1005,7 @@ class TabManager(
             useWideViewPort = true
             loadWithOverviewMode = true
             mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
-            mediaPlaybackRequiresUserGesture = false
+            mediaPlaybackRequiresUserGesture = true
             textZoom = currentSettings.textSizePercent
             userAgentString = if (isDesktop) DESKTOP_USER_AGENT else MOBILE_USER_AGENT
             allowFileAccess = false
@@ -1069,11 +1102,13 @@ class TabManager(
         tab.webView = null
     }
 
-    private fun notifyTabUpdated(tab: Tab) {
-        if (tab.isPrivate) {
-            _privateTabs.value = _privateTabs.value.map { if (it.id == tab.id) tab.copy() else it }
-        } else {
-            _normalTabs.value = _normalTabs.value.map { if (it.id == tab.id) tab.copy() else it }
-        }
+    /**
+     * Tabs are mutated in place (WebView callbacks hold the same object the list holds),
+     * so there is no tab.copy() any more. The old copy approach let a stale copy overwrite
+     * newer state, which is why Home flipped back and the loader never moved.
+     * Bumping the version makes the UI re-read the tab fields.
+     */
+    private fun notifyTabUpdated(@Suppress("UNUSED_PARAMETER") tab: Tab) {
+        _tabsVersion.update { it + 1 }
     }
 }
