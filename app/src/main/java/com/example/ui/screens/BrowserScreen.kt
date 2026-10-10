@@ -28,7 +28,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.add
+import androidx.compose.foundation.layout.exclude
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -94,6 +100,10 @@ import com.example.viewmodel.BrowserViewModel
 fun BrowserScreen(viewModel: BrowserViewModel) {
     val context = LocalContext.current
 
+    // Height of the always-visible bottom bar. Used so overlays (suggestions, find bar)
+    // only lift by the part of the keyboard that is NOT already covered by the bar.
+    val bottomBarInsets = WindowInsets.navigationBars.add(WindowInsets(bottom = 57.dp))
+
     BackHandler {
         viewModel.handleBackPress()
     }
@@ -149,6 +159,16 @@ fun BrowserScreen(viewModel: BrowserViewModel) {
             .fillMaxSize()
             .background(if (isPrivateMode) PrivateBackground else if (isDarkTheme) Color(0xFF151517) else Color.White)
     ) {
+        // Wallpaper is drawn once at full-screen size behind the (opaque) bars, so it
+        // never moves when the keyboard opens or the page area changes size.
+        if (isBlankOrHome) {
+            WallpaperBackground(
+                mode = settings.wallpaperMode,
+                solidColorHex = settings.wallpaperSolidColor,
+                customImagePath = settings.customWallpaperPath
+            )
+        }
+
         Column(
             modifier = Modifier.fillMaxSize()
         ) {
@@ -182,15 +202,6 @@ fun BrowserScreen(viewModel: BrowserViewModel) {
                     automationFieldCount = currentDetection?.detectedFieldCount ?: 0,
                     onAutomationClick = { viewModel.executeAutomationFill() },
                     onAutomationLongClick = { viewModel.showAutomationQuickFillSheet.value = true }
-                )
-            }
-
-            // Suggestions List (when address bar is focused)
-            if (isOmnibarFocused && suggestions.isNotEmpty()) {
-                SearchSuggestionsList(
-                    suggestions = suggestions,
-                    onSubmit = { viewModel.submitUrl(it) },
-                    onCopy = { viewModel.onOmnibarInputChanged(it) }
                 )
             }
 
@@ -290,6 +301,18 @@ fun BrowserScreen(viewModel: BrowserViewModel) {
                     }
                 }
 
+                // Suggestions / recents: fill the whole area under the address bar (Brave style)
+                if (isOmnibarFocused && suggestions.isNotEmpty()) {
+                    SearchSuggestionsList(
+                        suggestions = suggestions,
+                        onSubmit = { viewModel.submitUrl(it) },
+                        onCopy = { viewModel.onOmnibarInputChanged(it) },
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .windowInsetsPadding(WindowInsets.ime.exclude(bottomBarInsets))
+                    )
+                }
+
                 // Find in Page Bar at Bottom of page area
                 if (showFindInPage) {
                     FindInPageBar(
@@ -299,74 +322,74 @@ fun BrowserScreen(viewModel: BrowserViewModel) {
                         onPrevClick = { viewModel.findNext(false) },
                         onNextClick = { viewModel.findNext(true) },
                         onCloseClick = { viewModel.closeFindInPage() },
-                        modifier = Modifier.align(Alignment.BottomCenter)
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .windowInsetsPadding(WindowInsets.ime.exclude(bottomBarInsets))
                     )
                 }
             }
 
-            // Brave Bottom Navigation Bar (Hidden while keyboard is open)
-            if (!isKeyboardVisible) {
-                val isBookmarked = currentTab != null && viewModel.isPageBookmarked(currentTab.url)
-                BraveBottomNavBar(
-                    tabCount = totalTabsCount,
-                    isDarkTheme = isDarkTheme,
-                    isHomePage = isBlankOrHome,
-                    isCurrentPageBookmarked = isBookmarked,
-                    showBookmarkPopup = showBookmarkPopup,
-                    showTabsPopup = showTabsPopup,
-                    onHomeClick = {
-                        viewModel.tabManager.showHomeInCurrentTab()
-                    },
-                    onBookmarkClick = {
-                        viewModel.navigateTo(AppScreen.BOOKMARKS)
-                    },
-                    onSearchClick = {
-                        viewModel.triggerSearchFromBottomBar()
-                    },
-                    onTabsClick = {
-                        viewModel.navigateTo(AppScreen.TAB_SWITCHER)
-                    },
-                    onMenuClick = {
-                        viewModel.showHamburgerMenu.value = true
-                    },
-                    onBookmarkLongPress = {
-                        viewModel.showBookmarkLongPressPopup.value = true
-                    },
-                    onTabsLongPress = {
-                        viewModel.showTabsLongPressPopup.value = true
-                    },
-                    onDismissBookmarkPopup = {
-                        viewModel.showBookmarkLongPressPopup.value = false
-                    },
-                    onDismissTabsPopup = {
-                        viewModel.showTabsLongPressPopup.value = false
-                    },
-                    onAddOrEditBookmark = {
-                        val tab = currentTab
-                        if (tab != null && tab.url.isNotBlank()) {
-                            val existing = viewModel.getBookmarkForUrl(tab.url)
-                            if (existing != null) {
-                                // Already bookmarked, edit it
-                                viewModel.editBookmark(existing.copy(title = if (tab.title.isNotBlank()) tab.title else existing.title))
-                            } else {
-                                viewModel.addBookmark(title = if (tab.title.isNotBlank()) tab.title else tab.url, url = tab.url)
-                            }
+            // Brave Bottom Navigation Bar (always visible; the keyboard simply covers it)
+            val isBookmarked = currentTab != null && viewModel.isPageBookmarked(currentTab.url)
+            BraveBottomNavBar(
+                tabCount = totalTabsCount,
+                isDarkTheme = isDarkTheme,
+                isHomePage = isBlankOrHome,
+                isCurrentPageBookmarked = isBookmarked,
+                showBookmarkPopup = showBookmarkPopup,
+                showTabsPopup = showTabsPopup,
+                onHomeClick = {
+                    viewModel.tabManager.showHomeInCurrentTab()
+                },
+                onBookmarkClick = {
+                    viewModel.navigateTo(AppScreen.BOOKMARKS)
+                },
+                onSearchClick = {
+                    viewModel.triggerSearchFromBottomBar()
+                },
+                onTabsClick = {
+                    viewModel.navigateTo(AppScreen.TAB_SWITCHER)
+                },
+                onMenuClick = {
+                    viewModel.showHamburgerMenu.value = true
+                },
+                onBookmarkLongPress = {
+                    viewModel.showBookmarkLongPressPopup.value = true
+                },
+                onTabsLongPress = {
+                    viewModel.showTabsLongPressPopup.value = true
+                },
+                onDismissBookmarkPopup = {
+                    viewModel.showBookmarkLongPressPopup.value = false
+                },
+                onDismissTabsPopup = {
+                    viewModel.showTabsLongPressPopup.value = false
+                },
+                onAddOrEditBookmark = {
+                    val tab = currentTab
+                    if (tab != null && tab.url.isNotBlank()) {
+                        val existing = viewModel.getBookmarkForUrl(tab.url)
+                        if (existing != null) {
+                            // Already bookmarked, edit it
+                            viewModel.editBookmark(existing.copy(title = if (tab.title.isNotBlank()) tab.title else existing.title))
+                        } else {
+                            viewModel.addBookmark(title = if (tab.title.isNotBlank()) tab.title else tab.url, url = tab.url)
                         }
-                    },
-                    onViewBookmarks = {
-                        viewModel.navigateTo(AppScreen.BOOKMARKS)
-                    },
-                    onNewTab = {
-                        viewModel.tabManager.createNewTab(isPrivate = isPrivateMode)
-                    },
-                    onCloseCurrentTab = {
-                        currentTab?.let { viewModel.tabManager.closeTab(it.id) }
-                    },
-                    onNewPrivateTab = {
-                        viewModel.tabManager.createNewTab(isPrivate = true)
                     }
-                )
-            }
+                },
+                onViewBookmarks = {
+                    viewModel.navigateTo(AppScreen.BOOKMARKS)
+                },
+                onNewTab = {
+                    viewModel.tabManager.createNewTab(isPrivate = isPrivateMode)
+                },
+                onCloseCurrentTab = {
+                    currentTab?.let { viewModel.tabManager.closeTab(it.id) }
+                },
+                onNewPrivateTab = {
+                    viewModel.tabManager.createNewTab(isPrivate = true)
+                }
+            )
         }
 
         // Brave Floating Menu (Popup card anchored to bottom-right)
@@ -776,13 +799,6 @@ private fun BraveHomePage(
     Box(
         modifier = Modifier.fillMaxSize()
     ) {
-        // 1. Full-bleed Wallpaper
-        WallpaperBackground(
-            mode = settings.wallpaperMode,
-            solidColorHex = settings.wallpaperSolidColor,
-            customImagePath = settings.customWallpaperPath
-        )
-
         Column(
             modifier = Modifier
                 .fillMaxSize()

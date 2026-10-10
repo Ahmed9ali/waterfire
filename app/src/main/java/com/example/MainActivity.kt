@@ -14,7 +14,6 @@ import androidx.activity.viewModels
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -211,9 +210,9 @@ fun MainContent(viewModel: BrowserViewModel) {
             // Applying Scaffold's innerPadding as well would add the insets twice,
             // which is what pushed the address bar far below the status bar.
             modifier = if (currentScreen == AppScreen.BROWSER && !showSplash) {
-                Modifier
-                    .fillMaxSize()
-                    .imePadding()
+                // No imePadding here: the keyboard must not resize the browser screen,
+                // otherwise the wallpaper and page area jump while typing.
+                Modifier.fillMaxSize()
             } else {
                 Modifier
                     .fillMaxSize()

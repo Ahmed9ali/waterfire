@@ -60,7 +60,8 @@ enum class AppScreen {
 data class SearchSuggestion(
     val title: String,
     val url: String? = null,
-    val isBookmarkOrHistory: Boolean = false
+    val isBookmarkOrHistory: Boolean = false,
+    val isRecent: Boolean = false
 )
 
 data class SnackbarActionMessage(
@@ -412,8 +413,10 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         omnibarInput.value = text
         suggestionJob?.cancel()
 
-        if (text.trim().isEmpty()) {
-            suggestions.value = emptyList()
+       if (text.trim().isEmpty()) {
+            suggestionJob = viewModelScope.launch(Dispatchers.IO) {
+                suggestions.value = loadRecentSuggestions(database)
+            }
             return
         }
 
@@ -453,9 +456,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         omnibarInput.value = initialText
         isOmnibarFocused.value = true
         searchTriggerEvent.value = System.currentTimeMillis()
-        if (initialText.isNotBlank()) {
-            onOmnibarInputChanged(initialText)
-        }
+        onOmnibarInputChanged(initialText)
     }
 
     // Fire Action

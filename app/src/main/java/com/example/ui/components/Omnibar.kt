@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -37,12 +38,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
@@ -266,11 +271,12 @@ fun Omnibar(
                         )
                     }
 
-                    // Automation Quick Fill pill icon (to the left of X if focused)
+                    // Automation Quick Fill: gradient domino mask icon only (no field count)
                     val showAutomation = hasAutomationFields && !isHomePage
                     if (showAutomation) {
                         Box(
                             modifier = Modifier
+                                .size(32.dp)
                                 .clip(RoundedCornerShape(8.dp))
                                 .pointerInput(Unit) {
                                     detectTapGestures(
@@ -278,34 +284,31 @@ fun Omnibar(
                                         onLongPress = { onAutomationLongClick() }
                                     )
                                 }
-                                .padding(horizontal = 4.dp, vertical = 2.dp)
                                 .testTag("omnibar_automation_fill_button"),
                             contentAlignment = Alignment.Center
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    painter = painterResource(id = R.drawable.ic_automation),
-                                    contentDescription = "Fill form",
-                                    tint = BrandOrange,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                if (automationFieldCount > 0) {
-                                    Spacer(modifier = Modifier.width(3.dp))
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(8.dp))
-                                            .background(BrandOrange.copy(alpha = 0.2f))
-                                            .padding(horizontal = 4.dp, vertical = 1.dp)
-                                    ) {
-                                        Text(
-                                            text = automationFieldCount.toString(),
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = BrandOrange
+                            Icon(
+                                imageVector = AppIcons.DominoMask,
+                                contentDescription = "Fill form",
+                                tint = Color.Black,
+                                modifier = Modifier
+                                    .size(24.dp)
+                                    // offscreen layer so the gradient only paints where the icon is
+                                    .graphicsLayer { alpha = 0.99f }
+                                    .drawWithContent {
+                                        drawContent()
+                                        drawRect(
+                                            brush = Brush.linearGradient(
+                                                listOf(
+                                                    Color(0xFFFF3B30), // red
+                                                    Color(0xFF2F6BFF), // blue
+                                                    Color(0xFF9C3BFF)  // purple
+                                                )
+                                            ),
+                                            blendMode = BlendMode.SrcIn
                                         )
                                     }
-                                }
-                            }
+                            )
                         }
                     }
 
@@ -380,20 +383,14 @@ fun SearchSuggestionsList(
 ) {
     if (suggestions.isEmpty()) return
 
+    // The caller decides the size (it fills the whole area under the address bar).
     Surface(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 2.dp),
-        shape = RoundedCornerShape(12.dp),
+        modifier = modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+        shape = RoundedCornerShape(20.dp),
         color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 6.dp,
-        border = androidx.compose.foundation.BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+        tonalElevation = 2.dp
     ) {
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(max = 280.dp)
-        ) {
+        LazyColumn(modifier = Modifier.fillMaxSize()) {
             items(suggestions) { suggestion ->
                 Row(
                     modifier = Modifier
@@ -402,23 +399,27 @@ fun SearchSuggestionsList(
                             val target = suggestion.url ?: suggestion.title
                             onSubmit(target)
                         }
-                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
                         painter = painterResource(
-                            id = if (suggestion.isBookmarkOrHistory) R.drawable.ic_bookmark else R.drawable.ic_search
+                            id = when {
+                                suggestion.isRecent -> R.drawable.ic_history
+                                suggestion.isBookmarkOrHistory -> R.drawable.ic_bookmark
+                                else -> R.drawable.ic_search
+                            }
                         ),
                         contentDescription = null,
-                        tint = if (suggestion.isBookmarkOrHistory) BrandOrange else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(18.dp)
+                        tint = if (suggestion.isBookmarkOrHistory && !suggestion.isRecent) BrandOrange else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(22.dp)
                     )
-                    Spacer(modifier = Modifier.width(12.dp))
+                    Spacer(modifier = Modifier.width(16.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = suggestion.title,
                             color = MaterialTheme.colorScheme.onSurface,
-                            fontSize = 14.sp,
+                            fontSize = 16.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -426,7 +427,7 @@ fun SearchSuggestionsList(
                             Text(
                                 text = suggestion.url,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontSize = 11.sp,
+                                fontSize = 13.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
@@ -434,17 +435,17 @@ fun SearchSuggestionsList(
                     }
                     IconButton(
                         onClick = { onCopy(suggestion.title) },
-                        modifier = Modifier.size(28.dp)
+                        modifier = Modifier.size(36.dp)
                     ) {
                         Icon(
                             painter = painterResource(id = R.drawable.ic_arrow_back),
                             contentDescription = "Copy to field",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                            modifier = Modifier.size(16.dp)
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                            modifier = Modifier.size(18.dp).rotate(45f)
                         )
                     }
                 }
-                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), thickness = 0.5.dp)
+                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f), thickness = 0.5.dp)
             }
         }
     }
