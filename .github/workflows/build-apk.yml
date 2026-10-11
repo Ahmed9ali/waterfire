@@ -207,37 +207,52 @@ jobs:
           echo "::error::APK generation failed. See the Build Summary and build-log artifact."
           exit 1
 
-      # --------------------------------------------------
+           # --------------------------------------------------
       # 10. Verify generated APK
       # --------------------------------------------------
       - name: Verify APK
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
-          EXPECTED_APK="app/build/outputs/apk/debug/app-debug.apk"
+          APK="app/build/outputs/apk/debug/app-debug.apk"
 
-          if [ ! -f "$EXPECTED_APK" ]; then
-            echo "::error::APK not found at $EXPECTED_APK"
-
-            echo "Available APK files:"
+          if [ ! -f "$APK" ]; then
+            echo "::error::APK not found at $APK"
             find app -type f -name "*.apk" -print 2>/dev/null || true
-
             exit 1
           fi
 
-          if [ ! -s "$EXPECTED_APK" ]; then
+          if [ ! -s "$APK" ]; then
             echo "::error::APK file is empty."
             exit 1
           fi
 
-          if ! file "$EXPECTED_APK" | grep -q 'Zip archive'; then
-            echo "::error::Generated APK is not a valid ZIP-based Android package."
+          echo "APK file found:"
+          ls -lh "$APK"
+
+          echo "Checking APK archive integrity..."
+          unzip -t "$APK"
+
+          echo "Locating Android SDK build tools..."
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+
+          if [ -z "$SDK" ]; then
+            echo "::error::Android SDK location not found."
             exit 1
           fi
 
-          echo "APK verified successfully."
-          ls -lh "$EXPECTED_APK"
+          APKSIGNER=$(find "$SDK/build-tools" -type f -name apksigner 2>/dev/null | sort -V | tail -n 1)
+
+          if [ -z "$APKSIGNER" ]; then
+            echo "::error::apksigner was not found in Android SDK build-tools."
+            exit 1
+          fi
+
+          echo "Verifying APK signature..."
+          "$APKSIGNER" verify --verbose "$APK"
+
+          echo "APK archive and signature verified successfully."
 
           # --------------------------------------------------
       # 11. Upload APK as a workflow artifact
