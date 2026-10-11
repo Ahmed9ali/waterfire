@@ -16,6 +16,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -63,6 +64,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -89,7 +91,7 @@ import com.example.ui.components.PrivacyShieldSheet
 import com.example.ui.components.SearchSuggestionsList
 import com.example.ui.components.WallpaperBackground
 import com.example.ui.components.rememberFavicon
-import com.example.ui.theme.BrandOrange
+import com.example.ui.theme.MaterialTheme.colorScheme.primary
 import com.example.ui.theme.PrivateAccent
 import com.example.ui.theme.PrivateBackground
 import com.example.ui.theme.ThemeMode
@@ -99,6 +101,7 @@ import com.example.viewmodel.BrowserViewModel
 @Composable
 fun BrowserScreen(viewModel: BrowserViewModel) {
     val context = LocalContext.current
+    val primaryArgb = MaterialTheme.colorScheme.primary.toArgb()
 
     // Height of the always-visible bottom bar. Used so overlays (suggestions, find bar)
     // only lift by the part of the keyboard that is NOT already covered by the bar.
@@ -147,7 +150,14 @@ fun BrowserScreen(viewModel: BrowserViewModel) {
     var favoriteForPopup by remember { mutableStateOf<FavoriteEntity?>(null) }
     var favoriteToEdit by remember { mutableStateOf<FavoriteEntity?>(null) }
 
-    val isDarkTheme = settings.themeMode != ThemeMode.LIGHT
+    // Resolve the theme the same way WaterFoxTheme does (SYSTEM follows the phone setting).
+    // Before, SYSTEM counted as dark here but as light in MaterialTheme, so cards and
+    // dialogs came out light on a dark screen.
+    val isDarkTheme = when (settings.themeMode) {
+        ThemeMode.DARK -> true
+        ThemeMode.LIGHT -> false
+        ThemeMode.SYSTEM -> isSystemInDarkTheme()
+    }
 
     val isBlankOrHome = currentTab == null || currentTab.showHome || currentTab.url.isBlank() || currentTab.url.startsWith("about:")
 
@@ -157,7 +167,7 @@ fun BrowserScreen(viewModel: BrowserViewModel) {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(if (isPrivateMode) PrivateBackground else if (isDarkTheme) Color(0xFF151517) else Color.White)
+            .background(if (isPrivateMode) PrivateBackground else MaterialTheme.colorScheme.background)
     ) {
         // Wallpaper is drawn once at full-screen size behind the (opaque) bars, so it
         // never moves when the keyboard opens or the page area changes size.
@@ -176,7 +186,7 @@ fun BrowserScreen(viewModel: BrowserViewModel) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(if (isDarkTheme) Color(0xFF1F1F23) else Color.White)
+                    .background(MaterialTheme.colorScheme.surfaceContainer)
                     .statusBarsPadding()
             ) {
                 val currentDetection by viewModel.automationManager.currentFormDetection.collectAsState()
@@ -216,6 +226,7 @@ fun BrowserScreen(viewModel: BrowserViewModel) {
                     BraveHomePage(
                         viewModel = viewModel,
                         isPrivateMode = isPrivateMode,
+                        isDarkTheme = isDarkTheme,
                         onFavoriteLongPress = { fav -> favoriteForPopup = fav },
                         onAddFavorite = { viewModel.showAddFavoriteDialog.value = true }
                     )
@@ -237,7 +248,7 @@ fun BrowserScreen(viewModel: BrowserViewModel) {
                                                 ViewGroup.LayoutParams.MATCH_PARENT,
                                                 ViewGroup.LayoutParams.MATCH_PARENT
                                             )
-                                            setColorSchemeColors(android.graphics.Color.parseColor("#DE5833"))
+                                            setColorSchemeColors(primaryArgb)
                                             setOnRefreshListener {
                                                 try {
                                                     tab.webView?.reload()
@@ -305,6 +316,7 @@ fun BrowserScreen(viewModel: BrowserViewModel) {
                 if (isOmnibarFocused && suggestions.isNotEmpty()) {
                     SearchSuggestionsList(
                         suggestions = suggestions,
+                        isDarkTheme = isDarkTheme,
                         onSubmit = { viewModel.submitUrl(it) },
                         onCopy = { viewModel.onOmnibarInputChanged(it) },
                         modifier = Modifier
@@ -563,7 +575,7 @@ fun BrowserScreen(viewModel: BrowserViewModel) {
             Dialog(onDismissRequest = { favoriteForPopup = null }) {
                 Surface(
                     shape = RoundedCornerShape(16.dp),
-                    color = if (isDarkTheme) Color(0xFF3A3A3E) else Color.White,
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
                     shadowElevation = 8.dp,
                     modifier = Modifier.width(260.dp)
                 ) {
@@ -572,7 +584,7 @@ fun BrowserScreen(viewModel: BrowserViewModel) {
                             text = cleanFavoriteLabel(favorite.title, favorite.url),
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Bold,
-                            color = if (isDarkTheme) Color.White else Color(0xFF1E1E22),
+                            color = MaterialTheme.colorScheme.onSurface,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
@@ -583,7 +595,7 @@ fun BrowserScreen(viewModel: BrowserViewModel) {
                             viewModel.tabManager.createNewTab(isPrivate = false, initialUrl = favorite.url)
                             favoriteForPopup = null
                         }
-                        PopupRow("Open in private tab", R.drawable.ic_shield, isDarkTheme, tint = BrandOrange) {
+                        PopupRow("Open in private tab", R.drawable.ic_shield, isDarkTheme, tint = MaterialTheme.colorScheme.primary) {
                             viewModel.tabManager.createNewTab(isPrivate = true, initialUrl = favorite.url)
                             favoriteForPopup = null
                         }
@@ -633,7 +645,7 @@ fun BrowserScreen(viewModel: BrowserViewModel) {
                             }
                             favoriteToEdit = null
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = BrandOrange)
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                     ) {
                         Text("Save")
                     }
@@ -680,7 +692,7 @@ fun BrowserScreen(viewModel: BrowserViewModel) {
                                 viewModel.showAddFavoriteDialog.value = false
                             }
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = BrandOrange)
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                     ) {
                         Text("Add")
                     }
@@ -714,7 +726,7 @@ fun BrowserScreen(viewModel: BrowserViewModel) {
                                 Icon(
                                     painter = painterResource(id = if (item.isPrivate) R.drawable.ic_shield else R.drawable.ic_history),
                                     contentDescription = null,
-                                    tint = BrandOrange,
+                                    tint = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.size(20.dp)
                                 )
                                 Spacer(modifier = Modifier.width(12.dp))
@@ -754,7 +766,7 @@ private fun PopupRow(
     title: String,
     iconRes: Int,
     isDarkTheme: Boolean,
-    tint: Color = if (isDarkTheme) Color.White else Color(0xFF1E1E22),
+    tint: Color = MaterialTheme.colorScheme.onSurface,
     onClick: () -> Unit
 ) {
     Row(
@@ -775,7 +787,7 @@ private fun PopupRow(
         Text(
             text = title,
             fontSize = 15.sp,
-            color = if (isDarkTheme) Color.White else Color(0xFF1E1E22)
+            color = MaterialTheme.colorScheme.onSurface
         )
     }
 }
@@ -790,6 +802,7 @@ private fun PopupRow(
 private fun BraveHomePage(
     viewModel: BrowserViewModel,
     isPrivateMode: Boolean,
+    isDarkTheme: Boolean,
     onFavoriteLongPress: (FavoriteEntity) -> Unit,
     onAddFavorite: () -> Unit
 ) {
@@ -809,7 +822,7 @@ private fun BraveHomePage(
             // 2. Shortcut Tray at Top of content (Rounded card 20dp, 40% translucent black, 8dp side margin)
             Surface(
                 shape = RoundedCornerShape(20.dp),
-                color = Color(0xFF2B2B2E).copy(alpha = 0.78f),
+                color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.88f),
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 4.dp)
@@ -822,6 +835,7 @@ private fun BraveHomePage(
                     items(favorites, key = { it.id }) { favorite ->
                         FavoriteTile(
                             favorite = favorite,
+                            isDarkTheme = isDarkTheme,
                             onTap = { viewModel.tabManager.loadUrl(favorite.url) },
                             onLongPress = { onFavoriteLongPress(favorite) }
                         )
@@ -829,7 +843,7 @@ private fun BraveHomePage(
 
                     // Last item: "+" Add Tile
                     item {
-                        AddFavoriteTile(onClick = onAddFavorite)
+                        AddFavoriteTile(isDarkTheme = isDarkTheme, onClick = onAddFavorite)
                     }
                 }
             }
@@ -878,6 +892,7 @@ private fun BraveHomePage(
 @Composable
 private fun FavoriteTile(
     favorite: FavoriteEntity,
+    isDarkTheme: Boolean,
     onTap: () -> Unit,
     onLongPress: () -> Unit
 ) {
@@ -909,7 +924,7 @@ private fun FavoriteTile(
             modifier = Modifier
                 .size(48.dp)
                 .clip(CircleShape)
-                .background(Color(0xFF2A2A2D)),
+                .background(MaterialTheme.colorScheme.surfaceContainerHighest),
             contentAlignment = Alignment.Center
         ) {
             if (favicon != null) {
@@ -926,7 +941,7 @@ private fun FavoriteTile(
                     text = letter,
                     fontSize = 20.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = BrandOrange
+                    color = MaterialTheme.colorScheme.primary
                 )
             }
         }
@@ -937,7 +952,7 @@ private fun FavoriteTile(
             text = cleanLabel,
             fontSize = 12.sp,
             fontWeight = FontWeight.Normal,
-            color = Color.White,
+            color = MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.Center,
@@ -947,7 +962,7 @@ private fun FavoriteTile(
 }
 
 @Composable
-private fun AddFavoriteTile(onClick: () -> Unit) {
+private fun AddFavoriteTile(isDarkTheme: Boolean, onClick: () -> Unit) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
@@ -961,13 +976,13 @@ private fun AddFavoriteTile(onClick: () -> Unit) {
             modifier = Modifier
                 .size(48.dp)
                 .clip(CircleShape)
-                .background(Color(0xFF2A2A2D)),
+                .background(MaterialTheme.colorScheme.surfaceContainerHighest),
             contentAlignment = Alignment.Center
         ) {
             Icon(
                 painter = painterResource(id = R.drawable.ic_add),
                 contentDescription = "Add favorite",
-                tint = Color.White,
+                tint = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.size(22.dp)
             )
         }
@@ -978,7 +993,7 @@ private fun AddFavoriteTile(onClick: () -> Unit) {
             text = "Add",
             fontSize = 12.sp,
             fontWeight = FontWeight.Normal,
-            color = Color.White,
+            color = MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
             textAlign = TextAlign.Center
         )
@@ -1101,7 +1116,7 @@ private fun PageCrashView(
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             Button(
                 onClick = onReload,
-                colors = ButtonDefaults.buttonColors(containerColor = BrandOrange)
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
             ) {
                 Text("Reload")
             }

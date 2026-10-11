@@ -41,7 +41,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
 import com.example.R
-import com.example.ui.theme.BrandOrange
+import com.example.ui.theme.MaterialTheme.colorScheme.primary
 
 @Composable
 fun BraveBottomNavBar(
@@ -68,9 +68,9 @@ fun BraveBottomNavBar(
     modifier: Modifier = Modifier
 ) {
     val haptic = LocalHapticFeedback.current
-    val barBg = if (isDarkTheme) Color(0xFF151517) else Color.White
-    val dividerColor = if (isDarkTheme) Color(0xFF28282C) else Color(0xFFE0E0E0)
-    val iconTint = if (isDarkTheme) Color.White else Color(0xFF1F1F23)
+    val barBg = MaterialTheme.colorScheme.surfaceContainer
+    val dividerColor = MaterialTheme.colorScheme.outlineVariant
+    val iconTint = MaterialTheme.colorScheme.onSurface
 
     Column(
         modifier = modifier
@@ -233,8 +233,8 @@ private fun BookmarkLongPressPopup(
     onViewBookmarks: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    val cardBg = if (isDarkTheme) Color(0xFF3A3A3E) else Color.White
-    val textPrimary = if (isDarkTheme) Color.White else Color(0xFF1E1E22)
+    val cardBg = MaterialTheme.colorScheme.surfaceContainerHigh
+    val textPrimary = MaterialTheme.colorScheme.onSurface
     val textDisabled = textPrimary.copy(alpha = 0.38f)
 
     Popup(
@@ -276,7 +276,7 @@ private fun BookmarkLongPressPopup(
                         Icon(
                             painter = painterResource(id = if (isBookmarked) R.drawable.ic_edit else R.drawable.ic_bookmark),
                             contentDescription = null,
-                            tint = if (addEnabled) BrandOrange else textDisabled,
+                            tint = if (addEnabled) MaterialTheme.colorScheme.primary else textDisabled,
                             modifier = Modifier.size(20.dp)
                         )
                         Spacer(modifier = Modifier.width(14.dp))
@@ -330,8 +330,8 @@ private fun TabsLongPressPopup(
     onNewPrivateTab: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    val cardBg = if (isDarkTheme) Color(0xFF3A3A3E) else Color.White
-    val textPrimary = if (isDarkTheme) Color.White else Color(0xFF1E1E22)
+    val cardBg = MaterialTheme.colorScheme.surfaceContainerHigh
+    val textPrimary = MaterialTheme.colorScheme.onSurface
 
     Popup(
         onDismissRequest = onDismiss
@@ -426,7 +426,7 @@ private fun TabsLongPressPopup(
                         Icon(
                             painter = painterResource(id = R.drawable.ic_shield),
                             contentDescription = null,
-                            tint = BrandOrange,
+                            tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(20.dp)
                         )
                         Spacer(modifier = Modifier.width(14.dp))

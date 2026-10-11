@@ -247,12 +247,14 @@ class TabManager(
         } else {
             _currentTabId.value = list.first().id
         }
+        releasePendingHomeExcept(_currentTabId.value)
     }
 
     fun selectTab(id: String) {
         val isPrivate = _privateTabs.value.any { it.id == id }
         _isPrivateMode.value = isPrivate
         _currentTabId.value = id
+        releasePendingHomeExcept(id)
         updateCurrentTabInRoom(id)
     }
 
@@ -304,6 +306,8 @@ class TabManager(
             getOrCreateWebView(newTab, autoLoad = false)
             loadUrlInTab(newTab, initialUrl)
         }
+
+        if (!openInBackground) releasePendingHomeExcept(newTab.id)
 
         return newTab
     }
@@ -1139,5 +1143,28 @@ class TabManager(
             tab.showHome = false
             notifyTabUpdated(tab)
         }
+    }
+
+    /**
+     * When the user switches tabs, a tab that was still waiting to leave the home screen
+     * (its page loaded in the background, where paint callbacks may never fire) must not
+     * stay stuck on home. Release every pending tab except the current one, and also the
+     * current one if its page has already fully loaded.
+     */
+    private fun releasePendingHomeExcept(currentId: String) {
+        if (pendingHomeExit.isEmpty()) return
+        val all = _normalTabs.value + _privateTabs.value
+        var changed = false
+        for (id in pendingHomeExit.toList()) {
+            val tab = all.firstOrNull { it.id == id }
+            val loaded = (tab?.webView?.progress ?: 0) >= 100
+            if (id == currentId && !loaded) continue
+            pendingHomeExit.remove(id)
+            if (tab != null) {
+                tab.showHome = false
+                changed = true
+            }
+        }
+        if (changed) _tabsVersion.update { it + 1 }
     }
 }

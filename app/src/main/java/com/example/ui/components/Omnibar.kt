@@ -6,8 +6,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -19,6 +21,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -62,8 +66,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
-import com.example.ui.theme.BrandOrange
-import com.example.ui.theme.BrandOrangeBright
+import com.example.ui.theme.MaterialTheme.colorScheme.primary
+import com.example.ui.theme.MaterialTheme.colorScheme.primaryBright
 import com.example.ui.theme.SuccessGreen
 import com.example.ui.theme.WarningYellow
 import com.example.viewmodel.SearchSuggestion
@@ -138,14 +142,14 @@ fun Omnibar(
         }
     }
 
-    val fieldBg = if (isDarkTheme) Color(0xFF2F2F33) else Color(0xFFF0F0F2)
-    val textPrimary = if (isDarkTheme) Color.White else Color(0xFF1C1C1E)
-    val placeholderColor = if (isDarkTheme) Color(0xFFA0A0A5) else Color(0xFF7C7C80)
+    val fieldBg = MaterialTheme.colorScheme.surfaceContainerHighest
+    val textPrimary = MaterialTheme.colorScheme.onSurface
+    val placeholderColor = MaterialTheme.colorScheme.onSurfaceVariant
 
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .background(if (isDarkTheme) Color(0xFF1F1F23) else Color.White)
+            .background(MaterialTheme.colorScheme.surfaceContainer)
     ) {
         // Single row top bar
         Row(
@@ -239,7 +243,7 @@ fun Omnibar(
                                 fontSize = 15.sp,
                                 fontWeight = FontWeight.Normal
                             ),
-                            cursorBrush = SolidColor(BrandOrange),
+                            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(
                                 keyboardType = KeyboardType.Text,
@@ -366,7 +370,7 @@ fun Omnibar(
                     .height(2.5.dp)
                     .background(
                         Brush.horizontalGradient(
-                            listOf(BrandOrange, BrandOrangeBright, Color(0xFFFFAB40))
+                            listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.tertiary)
                         )
                     )
             )
@@ -377,30 +381,51 @@ fun Omnibar(
 @Composable
 fun SearchSuggestionsList(
     suggestions: List<SearchSuggestion>,
+    isDarkTheme: Boolean,
     onSubmit: (String) -> Unit,
     onCopy: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     if (suggestions.isEmpty()) return
 
-    // The caller decides the size (it fills the whole area under the address bar).
-    Surface(
-        modifier = modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-        shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 2.dp
+    // Explicit colors so the list always follows the app theme
+    val containerBg = MaterialTheme.colorScheme.surface
+    val itemBg = MaterialTheme.colorScheme.surfaceContainerHigh
+    val iconBg = MaterialTheme.colorScheme.surfaceContainerHighest
+    val titleColor = MaterialTheme.colorScheme.onSurface
+    val subColor = MaterialTheme.colorScheme.onSurfaceVariant
+
+    LazyColumn(
+        modifier = modifier.background(containerBg),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
-        LazyColumn(modifier = Modifier.fillMaxSize()) {
-            items(suggestions) { suggestion ->
-                Row(
+        itemsIndexed(suggestions) { index, suggestion ->
+            val last = suggestions.lastIndex
+            val shape = RoundedCornerShape(
+                topStart = if (index == 0) 20.dp else 4.dp,
+                topEnd = if (index == 0) 20.dp else 4.dp,
+                bottomStart = if (index == last) 20.dp else 4.dp,
+                bottomEnd = if (index == last) 20.dp else 4.dp
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(shape)
+                    .background(itemBg)
+                    .clickable {
+                        val target = suggestion.url ?: suggestion.title
+                        onSubmit(target)
+                    }
+                    .padding(start = 12.dp, end = 4.dp, top = 10.dp, bottom = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable {
-                            val target = suggestion.url ?: suggestion.title
-                            onSubmit(target)
-                        }
-                        .padding(horizontal = 16.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(iconBg),
+                    contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         painter = painterResource(
@@ -411,41 +436,40 @@ fun SearchSuggestionsList(
                             }
                         ),
                         contentDescription = null,
-                        tint = if (suggestion.isBookmarkOrHistory && !suggestion.isRecent) BrandOrange else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(22.dp)
+                        tint = if (suggestion.isBookmarkOrHistory && !suggestion.isRecent) MaterialTheme.colorScheme.primary else subColor,
+                        modifier = Modifier.size(20.dp)
                     )
-                    Spacer(modifier = Modifier.width(16.dp))
-                    Column(modifier = Modifier.weight(1f)) {
+                }
+                Spacer(modifier = Modifier.width(14.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = suggestion.title,
+                        color = titleColor,
+                        fontSize = 16.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (!suggestion.url.isNullOrBlank()) {
                         Text(
-                            text = suggestion.title,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            fontSize = 16.sp,
+                            text = suggestion.url,
+                            color = subColor,
+                            fontSize = 13.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-                        if (!suggestion.url.isNullOrBlank()) {
-                            Text(
-                                text = suggestion.url,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontSize = 13.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-                    IconButton(
-                        onClick = { onCopy(suggestion.title) },
-                        modifier = Modifier.size(36.dp)
-                    ) {
-                        Icon(
-                            painter = painterResource(id = R.drawable.ic_arrow_back),
-                            contentDescription = "Copy to field",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
-                            modifier = Modifier.size(18.dp).rotate(45f)
-                        )
                     }
                 }
-                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f), thickness = 0.5.dp)
+                IconButton(
+                    onClick = { onCopy(suggestion.title) },
+                    modifier = Modifier.size(44.dp)
+                ) {
+                    Icon(
+                        painter = painterResource(id = R.drawable.ic_arrow_back),
+                        contentDescription = "Copy to field",
+                        tint = subColor,
+                        modifier = Modifier.size(18.dp).rotate(45f)
+                    )
+                }
             }
         }
     }
