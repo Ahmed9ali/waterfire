@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -63,7 +64,6 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.text.KeyboardOptions
 import com.example.R
 import com.example.automation.AutomationFileAnalyzer
 import com.example.automation.CountryList
@@ -300,7 +300,6 @@ fun ManualFieldSheet(
                 }
             }
 
-            // ---------- Fields ----------
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -381,7 +380,6 @@ fun ManualFieldSheet(
                 }
             }
 
-            // ---------- Records ----------
             if (fields.isNotEmpty()) {
                 item {
                     Row(
@@ -435,7 +433,6 @@ fun ManualFieldSheet(
                     }
                 }
 
-                // Add record button — inline, no FAB overlap
                 item {
                     Button(
                         onClick = { addRow() },
@@ -459,7 +456,6 @@ fun ManualFieldSheet(
         }
     }
 
-    // ---------- Add / Edit field dialog ----------
     if (showAddFieldDialog) {
         val editing = editingFieldKey?.let { k -> fields.firstOrNull { it.key == k } }
         AddFieldDialog(
@@ -479,7 +475,8 @@ fun ManualFieldSheet(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+// FIX: this @OptIn now includes ExperimentalLayoutApi (FlowRow below needs it)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun AddFieldDialog(
     existing: FieldDef?,
