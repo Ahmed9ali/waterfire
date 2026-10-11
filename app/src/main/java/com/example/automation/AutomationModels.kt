@@ -10,17 +10,6 @@ enum class UsageMode(val displayName: String) {
     MANUAL("Manual (pick each time)")
 }
 
-enum class ContentFormat(val displayName: String) {
-    JSON("JSON"),
-    NDJSON("JSON Lines"),
-    KEY_VALUE("Key-Value"),
-    DELIMITED("CSV / Delimited"),
-    HTML_TABLE("HTML Table"),
-    XML("XML"),
-    FREE_TEXT("Free Text"),
-    UNKNOWN("Unknown")
-}
-
 data class AutomationSettings(
     val detectionEnabled: Boolean = true,
     val showOmnibarIcon: Boolean = true,
@@ -61,7 +50,6 @@ data class DetectedColumn(
     val userLabel: String? = null
 )
 
-/** User-facing label helper for a column. */
 val DetectedColumn.displayLabel: String
     get() = (userLabel?.takeIf { it.isNotBlank() }
         ?: normalizedType.replace('_', ' ')
@@ -75,24 +63,3 @@ data class FileAnalysisResult(
     val validRecordCount: Int,
     val skippedLinesCount: Int
 )
-
-data class SmartAnalysisResult(
-    val format: ContentFormat,
-    val formatConfidence: Float,
-    val detectedColumns: List<DetectedColumn>,
-    val records: List<Map<String, String>>,
-    val totalLines: Int,
-    val validRecordCount: Int,
-    val skippedLinesCount: Int,
-    val needsUserInput: Boolean = false,
-    val userPrompt: String? = null,
-    val suggestedDatasetName: String? = null
-) {
-    fun toFileAnalysisResult() = FileAnalysisResult(
-        detectedColumns = detectedColumns,
-        records = records,
-        totalLines = totalLines,
-        validRecordCount = validRecordCount,
-        skippedLinesCount = skippedLinesCount
-    )
-}

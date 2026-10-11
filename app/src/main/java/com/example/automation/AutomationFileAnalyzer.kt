@@ -128,8 +128,15 @@ object AutomationFileAnalyzer {
     fun analyzeSmart(content: String, hint: ContentFormat? = null): SmartAnalysisResult {
         val text = content.replace("\r\n", "\n").replace("\r", "\n").trim()
         if (text.isEmpty()) return SmartAnalysisResult(
-            ContentFormat.UNKNOWN, 0f, emptyList(), emptyList(), 0, 0, 0,
-            needsUserInput = true, userPrompt = "Content is empty."
+            format = ContentFormat.UNKNOWN,
+            formatConfidence = 0f,
+            columns = emptyList(),
+            records = emptyList(),
+            totalLines = 0,
+            validRecordCount = 0,
+            skippedLinesCount = 0,
+            needsUserInput = true,
+            userPrompt = "Content is empty."
         )
 
         val candidates = mutableListOf<Triple<ContentFormat, Float, SmartAnalysisResult>>()
@@ -152,11 +159,22 @@ object AutomationFileAnalyzer {
         parseDelimited(text)?.let { candidates += Triple(ContentFormat.DELIMITED, 0.88f, it) }
         candidates += Triple(ContentFormat.FREE_TEXT, 0.4f, parseFreeText(text))
 
-        val best = if (hint != null) candidates.firstOrNull { it.first == hint }
-            ?: candidates.maxByOrNull { it.second }
-        else candidates.maxByOrNull { it.second } ?: candidates.last()
+        // Always non-empty because we appended FREE_TEXT above, but keep the
+        // type checker happy with an explicit non-nullable type.
+        val best: Triple<ContentFormat, Float, SmartAnalysisResult> =
+            if (hint != null) {
+                candidates.firstOrNull { it.first == hint }
+                    ?: candidates.maxByOrNull { it.second }
+                    ?: candidates.last()
+            } else {
+                candidates.maxByOrNull { it.second }
+                    ?: candidates.last()
+            }
 
-        val (fmt, conf, base) = best
+        val fmt = best.first
+        val conf = best.second
+        val base = best.third
+
         val weak = base.validRecordCount == 0 ||
                 base.columns.isEmpty() ||
                 (fmt == ContentFormat.FREE_TEXT && base.columns.size < 2)
@@ -256,8 +274,10 @@ object AutomationFileAnalyzer {
         }
         val distinct = dedupe(mapped)
         return SmartAnalysisResult(
-            format = ContentFormat.UNKNOWN, formatConfidence = 0f,
-            columns = cols, records = distinct,
+            format = ContentFormat.UNKNOWN,
+            formatConfidence = 0f,
+            columns = cols,
+            records = distinct,
             totalLines = text.lines().size,
             validRecordCount = distinct.size,
             skippedLinesCount = 0

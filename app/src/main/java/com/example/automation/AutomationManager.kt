@@ -44,7 +44,7 @@ class AutomationManager(
         return if (text.isBlank()) SmartAnalysisResult(
             format = ContentFormat.UNKNOWN,
             formatConfidence = 0f,
-            detectedColumns = emptyList(),
+            columns = emptyList(),
             records = emptyList(),
             totalLines = 0,
             validRecordCount = 0,
@@ -54,10 +54,6 @@ class AutomationManager(
         ) else AutomationFileAnalyzer.analyzeSmart(text)
     }
 
-    /**
-     * Persist an imported dataset. If [columns] is provided, values are remapped
-     * using the user-facing normalized type.
-     */
     suspend fun saveImportedDataset(
         name: String,
         sourceFileName: String,
@@ -73,7 +69,7 @@ class AutomationManager(
         val activeCols = columns.filter { !it.isIgnored }
         val typeByRaw = activeCols.associate { it.rawKey to it.normalizedType }
 
-        val mappedRows: List<Map<String, String>> = rows.mapIndexed { idx, row ->
+        val mappedRows: List<Map<String, String>> = rows.map { row ->
             val out = mutableMapOf<String, String>()
             for ((rawKey, value) in row) {
                 val type = typeByRaw[rawKey] ?: rawKey
@@ -93,7 +89,6 @@ class AutomationManager(
     }
 
     suspend fun updateColumnLabel(datasetId: String, oldType: String, newLabel: String) {
-        // Rename normalized type across records of this dataset.
         val key = newLabel.trim().lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_')
         if (key.isBlank()) return
         val dsRecords = records.value.filter { it.datasetId == datasetId }
@@ -122,10 +117,21 @@ class AutomationManager(
         records.value.filter { it.datasetId == datasetId }.sortedBy { it.orderIndex }
 
     fun getCachedRecordForUrl(url: String) = pageRecordCache[url]
-    fun clearCachedRecordForUrl(url: String) { pageRecordCache.remove(url) }
-    fun clearAllPageRecordCaches() { pageRecordCache.clear(); sessionUsedRandomIds.clear() }
 
-    fun getNextRecordToFill(dataset: Dataset, pageUrl: String, forceNext: Boolean = false): Pair<DatasetRecord?, String?> {
+    fun clearCachedRecordForUrl(url: String) {
+        pageRecordCache.remove(url)
+    }
+
+    fun clearAllPageRecordCaches() {
+        pageRecordCache.clear()
+        sessionUsedRandomIds.clear()
+    }
+
+    fun getNextRecordToFill(
+        dataset: Dataset,
+        pageUrl: String,
+        forceNext: Boolean = false
+    ): Pair<DatasetRecord?, String?> {
         val all = getRecordsForDataset(dataset.id)
         if (all.isEmpty()) return null to "Dataset is empty"
 
@@ -142,15 +148,21 @@ class AutomationManager(
                 val first = all.firstOrNull()
                 if (first != null && pageUrl.isNotBlank()) pageRecordCache[pageUrl] = first
                 first to "Dataset exhausted. Looped back to start."
-            } else null to "All records used. Reset or pick another dataset."
+            } else {
+                null to "All records used. Reset or pick another dataset."
+            }
         }
 
         val chosen = when (dataset.usageMode) {
-            UsageMode.SEQUENTIAL_TOP -> available[dataset.currentIndex.coerceIn(0, available.size - 1)]
-            UsageMode.SEQUENTIAL_BOTTOM -> available[(available.size - 1 - dataset.currentIndex).coerceIn(0, available.size - 1)]
-            UsageMode.RANDOM -> available[Random.nextInt(available.size)]
+            UsageMode.SEQUENTIAL_TOP ->
+                available[dataset.currentIndex.coerceIn(0, available.size - 1)]
+            UsageMode.SEQUENTIAL_BOTTOM ->
+                available[(available.size - 1 - dataset.currentIndex).coerceIn(0, available.size - 1)]
+            UsageMode.RANDOM ->
+                available[Random.nextInt(available.size)]
             UsageMode.RANDOM_WITHOUT_REPEAT -> {
-                val pool = available.filter { !sessionUsedRandomIds.contains(it.id) }
+                val pool = available
+                    .filter { !sessionUsedRandomIds.contains(it.id) }
                     .ifEmpty { sessionUsedRandomIds.clear(); available }
                 pool[Random.nextInt(pool.size)].also { sessionUsedRandomIds.add(it.id) }
             }
@@ -170,16 +182,23 @@ class AutomationManager(
 
     fun shouldWarnHttpPassword(url: String, record: DatasetRecord): Boolean {
         val http = url.startsWith("http://", true)
-        val hasPw = record.fields.containsKey("password") || record.fields.containsKey("confirm_password")
+        val hasPw = record.fields.containsKey("password") ||
+                record.fields.containsKey("confirm_password")
         return http && hasPw
     }
 
-    fun buildFillScript(fields: Map<String, String>, highlight: Boolean, autoSubmit: Boolean): String {
+    fun buildFillScript(
+        fields: Map<String, String>,
+        highlight: Boolean,
+        autoSubmit: Boolean
+    ): String {
         val obj = JSONObject()
         fields.forEach { (k, v) -> obj.put(k, v) }
         val escaped = obj.toString()
-            .replace("\\", "\\\\").replace("'", "\\'")
-            .replace("\n", "\\n").replace("\r", "\\r")
+            .replace("\\", "\\\\")
+            .replace("'", "\\'")
+            .replace("\n", "\\n")
+            .replace("\r", "\\r")
         return "if (window.__waterfox_fill_fields) { window.__waterfox_fill_fields('$escaped', $highlight, $autoSubmit); }"
     }
 
