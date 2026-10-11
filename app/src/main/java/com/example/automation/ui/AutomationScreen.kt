@@ -27,7 +27,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -90,10 +89,11 @@ fun AutomationScreen(viewModel: BrowserViewModel) {
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
 
-    val automationManager = viewModel.automationManager
+    val automationManager = remember { viewModel.automationManager }
     val datasets by automationManager.datasets.collectAsState()
     val allRecords by automationManager.records.collectAsState()
     val settings by automationManager.settings.collectAsState()
+    val fallbackToPhone by automationManager.fallbackToPhone.collectAsState()
 
     var importMode by remember { mutableStateOf(ImportMode.Upload) }
     var showPasteDialog by remember { mutableStateOf(false) }
@@ -116,32 +116,59 @@ fun AutomationScreen(viewModel: BrowserViewModel) {
         }
     }
 
-    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+    val filePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
         uri ?: return@rememberLauncherForActivityResult
         scope.launch {
             isBusy = true
             try {
-                val (name, content, error) = withContext(Dispatchers.IO) {
-                    val cr = context.contentResolver
-                    val nm = uri.lastPathSegment ?: "uploaded_data.txt"
-                    val bytes = cr.openInputStream(uri)?.use { it.readBytes() } ?: ByteArray(0)
-                    if (bytes.size > 5 * 1024 * 1024) return@withContext Triple(nm, "", "File exceeds 5 MB")
-                    if (AutomationFileAnalyzer.isBinaryFile(bytes)) return@withContext Triple(nm, "", "Binary files are not supported")
-                    Triple(nm, AutomationFileAnalyzer.detectEncodingAndRead(bytes), null)
+                val result = runCatching {
+                    withContext(Dispatchers.IO) {
+                        val cr = context.contentResolver
+                        val nm = runCatching { uri.lastPathSegment }.getOrNull()
+                            ?: "uploaded_data.txt"
+                        val bytes = cr.openInputStream(uri)?.use { it.readBytes() }
+                            ?: ByteArray(0)
+                        if (bytes.size > 5 * 1024 * 1024) {
+                            return@withContext Triple(nm, "", "File exceeds 5 MB")
+                        }
+                        if (AutomationFileAnalyzer.isBinaryFile(bytes)) {
+                            return@withContext Triple(nm, "", "Binary files are not supported")
+                        }
+                        Triple(nm, AutomationFileAnalyzer.detectEncodingAndRead(bytes), null)
+                    }
+                }.getOrElse { e ->
+                    Triple("uploaded_data.txt", "", "Failed to read file: ${e.message}")
                 }
-                if (error != null) snackbar.showSnackbar(error)
-                else if (content.isBlank()) snackbar.showSnackbar("File is empty or unrecognized.")
-                else {
-                    val smart = withContext(Dispatchers.Default) { AutomationFileAnalyzer.analyzeSmart(content) }
-                    if (smart.validRecordCount == 0 && smart.format == ContentFormat.UNKNOWN) {
-                        manualInitialName = name.substringBeforeLast('.')
-                        snackbar.showSnackbar("Couldn't read this file — opening manual entry.")
-                        showManualSheet = true
-                    } else {
-                        pendingResult = name to smart
+
+                val (name, content, error) = result
+                when {
+                    error != null -> snackbar.showSnackbar(error)
+                    content.isBlank() -> snackbar.showSnackbar("File is empty or unrecognized.")
+                    else -> {
+                        val smart = withContext(Dispatchers.Default) {
+                            runCatching { AutomationFileAnalyzer.analyzeSmart(content) }
+                                .getOrNull()
+                        }
+                        if (smart == null) {
+                            snackbar.showSnackbar("Couldn't analyse the file.")
+                        } else if (smart.validRecordCount == 0 &&
+                            smart.format == ContentFormat.UNKNOWN
+                        ) {
+                            manualInitialName = name.substringBeforeLast('.')
+                            snackbar.showSnackbar("Couldn't read this file — opening manual entry.")
+                            showManualSheet = true
+                        } else {
+                            pendingResult = name to smart
+                        }
                     }
                 }
-            } finally { isBusy = false }
+            } catch (t: Throwable) {
+                snackbar.showSnackbar("Unexpected error: ${t.message}")
+            } finally {
+                isBusy = false
+            }
         }
     }
 
@@ -152,17 +179,24 @@ fun AutomationScreen(viewModel: BrowserViewModel) {
             onCancel = { showManualSheet = false },
             onSave = { name, _, records ->
                 scope.launch {
-                    val ds = Dataset(
-                        name = name,
-                        sourceFileName = "manual_entry",
-                        isActive = datasets.isEmpty()
-                    )
-                    val recs = records.mapIndexed { i, f ->
-                        DatasetRecord(datasetId = ds.id, fields = f, orderIndex = i)
+                    val ok = runCatching {
+                        val ds = Dataset(
+                            name = name,
+                            sourceFileName = "manual_entry",
+                            isActive = datasets.isEmpty()
+                        )
+                        val recs = records.mapIndexed { i, f ->
+                            DatasetRecord(datasetId = ds.id, fields = f, orderIndex = i)
+                        }
+                        automationManager.repository.saveDatasetWithRecords(ds, recs)
+                        ds
+                    }.getOrNull()
+                    if (ok == null) {
+                        snackbar.showSnackbar("Failed to save dataset.")
+                    } else {
+                        showManualSheet = false
+                        snackbar.showSnackbar("Saved ${records.size} records to ${ok.name}")
                     }
-                    automationManager.repository.saveDatasetWithRecords(ds, recs)
-                    showManualSheet = false
-                    snackbar.showSnackbar("Saved ${recs.size} records to $name")
                 }
             }
         )
@@ -182,17 +216,24 @@ fun AutomationScreen(viewModel: BrowserViewModel) {
             },
             onConfirmSave = { datasetName, records, _ ->
                 scope.launch {
-                    val ds = Dataset(
-                        name = datasetName,
-                        sourceFileName = name,
-                        isActive = datasets.isEmpty()
-                    )
-                    val recs = records.mapIndexed { i, f ->
-                        DatasetRecord(datasetId = ds.id, fields = f, orderIndex = i)
+                    val ok = runCatching {
+                        val ds = Dataset(
+                            name = datasetName,
+                            sourceFileName = name,
+                            isActive = datasets.isEmpty()
+                        )
+                        val recs = records.mapIndexed { i, f ->
+                            DatasetRecord(datasetId = ds.id, fields = f, orderIndex = i)
+                        }
+                        automationManager.repository.saveDatasetWithRecords(ds, recs)
+                        ds
+                    }.getOrNull()
+                    if (ok == null) {
+                        snackbar.showSnackbar("Failed to save dataset.")
+                    } else {
+                        pendingResult = null
+                        snackbar.showSnackbar("Saved ${records.size} records to ${ok.name}")
                     }
-                    automationManager.repository.saveDatasetWithRecords(ds, recs)
-                    pendingResult = null
-                    snackbar.showSnackbar("Saved ${recs.size} records to $datasetName")
                 }
             }
         )
@@ -207,24 +248,30 @@ fun AutomationScreen(viewModel: BrowserViewModel) {
             dataset = ds,
             records = recs,
             onBack = { selectedDataset = null },
-            onUpdateDataset = { scope.launch { automationManager.repository.updateDataset(it) } },
+            onUpdateDataset = { scope.launch { runCatching { automationManager.repository.updateDataset(it) } } },
             onDeleteDataset = {
                 scope.launch {
-                    automationManager.repository.deleteDataset(ds.id)
+                    runCatching { automationManager.repository.deleteDataset(ds.id) }
                     selectedDataset = null
                 }
             },
-            onMarkAllUnused = { scope.launch { automationManager.repository.markAllRecordsUnused(ds.id) } },
-            onResetPointer = { scope.launch { automationManager.repository.resetPointer(ds.id) } },
+            onMarkAllUnused = {
+                scope.launch { runCatching { automationManager.repository.markAllRecordsUnused(ds.id) } }
+            },
+            onResetPointer = {
+                scope.launch { runCatching { automationManager.repository.resetPointer(ds.id) } }
+            },
             onAddRecord = { f ->
                 scope.launch {
-                    automationManager.repository.insertRecord(
-                        DatasetRecord(datasetId = ds.id, fields = f, orderIndex = recs.size)
-                    )
+                    runCatching {
+                        automationManager.repository.insertRecord(
+                            DatasetRecord(datasetId = ds.id, fields = f, orderIndex = recs.size)
+                        )
+                    }
                 }
             },
-            onUpdateRecord = { scope.launch { automationManager.repository.updateRecord(it) } },
-            onDeleteRecord = { scope.launch { automationManager.repository.deleteRecord(it) } }
+            onUpdateRecord = { scope.launch { runCatching { automationManager.repository.updateRecord(it) } } },
+            onDeleteRecord = { scope.launch { runCatching { automationManager.repository.deleteRecord(it) } } }
         )
         return
     }
@@ -254,30 +301,17 @@ fun AutomationScreen(viewModel: BrowserViewModel) {
                 actions = {
                     TextButton(
                         onClick = {
-                            viewModel.tabManager.loadUrl("file:///android_asset/automation_test.html")
-                            viewModel.navigateTo(AppScreen.BROWSER)
+                            runCatching {
+                                viewModel.tabManager.loadUrl("file:///android_asset/automation_test.html")
+                                viewModel.navigateTo(AppScreen.BROWSER)
+                            }
                         }
                     ) { Text("Test Page", color = BrandOrange, fontSize = 12.sp) }
                 }
             )
         },
-        snackbarHost = { SnackbarHost(snackbar) },
-        floatingActionButton = {
-            ExtendedFloatingActionButton(
-                onClick = {
-                    when (importMode) {
-                        ImportMode.Upload -> filePicker.launch(arrayOf("*/*", "text/*", "application/json"))
-                        ImportMode.Paste -> { pasteText = ""; showPasteDialog = true }
-                        ImportMode.Manual -> { manualInitialName = ""; showManualSheet = true }
-                    }
-                },
-                containerColor = BrandOrange,
-                contentColor = Color.White,
-                icon = { Icon(painterResource(R.drawable.ic_add), contentDescription = null) },
-                text = { Text(if (isBusy) "Reading…" else "Import") },
-                expanded = !isBusy
-            )
-        }
+        snackbarHost = { SnackbarHost(snackbar) }
+        // NOTE: no floatingActionButton — the big action button below is enough
     ) { padding ->
         LazyColumn(
             modifier = Modifier
@@ -286,7 +320,7 @@ fun AutomationScreen(viewModel: BrowserViewModel) {
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // ---------- Import mode segmented ----------
+            // ---------- Mode segmented ----------
             item {
                 SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                     ImportMode.entries.forEachIndexed { index, m ->
@@ -316,7 +350,10 @@ fun AutomationScreen(viewModel: BrowserViewModel) {
             item {
                 when (importMode) {
                     ImportMode.Upload -> Button(
-                        onClick = { filePicker.launch(arrayOf("*/*", "text/*", "application/json")) },
+                        onClick = {
+                            runCatching { filePicker.launch(arrayOf("*/*")) }
+                                .onFailure { scope.launch { snackbar.showSnackbar("Cannot open file picker: ${it.message}") } }
+                        },
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(52.dp),
@@ -449,7 +486,9 @@ fun AutomationScreen(viewModel: BrowserViewModel) {
                             trailingContent = {
                                 if (!ds.isActive) {
                                     TextButton(onClick = {
-                                        scope.launch { automationManager.repository.setActiveDataset(ds.id) }
+                                        scope.launch {
+                                            runCatching { automationManager.repository.setActiveDataset(ds.id) }
+                                        }
                                     }) {
                                         Text("Set active", color = BrandOrange, fontSize = 12.sp)
                                     }
@@ -460,7 +499,7 @@ fun AutomationScreen(viewModel: BrowserViewModel) {
                 }
             }
 
-            // ---------- Settings group ----------
+            // ---------- Settings ----------
             item {
                 Spacer(Modifier.height(4.dp))
                 Text(
@@ -479,7 +518,11 @@ fun AutomationScreen(viewModel: BrowserViewModel) {
                             subtitle = "Find forms and inputs on web pages",
                             checked = settings.detectionEnabled,
                             onCheckedChange = {
-                                scope.launch { automationManager.repository.updateSettings(settings.copy(detectionEnabled = it)) }
+                                scope.launch {
+                                    runCatching {
+                                        automationManager.repository.updateSettings(settings.copy(detectionEnabled = it))
+                                    }
+                                }
                             }
                         )
                         HorizontalDivider(Modifier.padding(horizontal = 16.dp))
@@ -488,7 +531,11 @@ fun AutomationScreen(viewModel: BrowserViewModel) {
                             subtitle = "Display the fill button when forms are detected",
                             checked = settings.showOmnibarIcon,
                             onCheckedChange = {
-                                scope.launch { automationManager.repository.updateSettings(settings.copy(showOmnibarIcon = it)) }
+                                scope.launch {
+                                    runCatching {
+                                        automationManager.repository.updateSettings(settings.copy(showOmnibarIcon = it))
+                                    }
+                                }
                             }
                         )
                         HorizontalDivider(Modifier.padding(horizontal = 16.dp))
@@ -497,7 +544,11 @@ fun AutomationScreen(viewModel: BrowserViewModel) {
                             subtitle = "Glow outline when a field is filled",
                             checked = settings.highlightFilledFields,
                             onCheckedChange = {
-                                scope.launch { automationManager.repository.updateSettings(settings.copy(highlightFilledFields = it)) }
+                                scope.launch {
+                                    runCatching {
+                                        automationManager.repository.updateSettings(settings.copy(highlightFilledFields = it))
+                                    }
+                                }
                             }
                         )
                         HorizontalDivider(Modifier.padding(horizontal = 16.dp))
@@ -506,7 +557,11 @@ fun AutomationScreen(viewModel: BrowserViewModel) {
                             subtitle = "Submit the form immediately after injection",
                             checked = settings.autoSubmitAfterFilling,
                             onCheckedChange = {
-                                scope.launch { automationManager.repository.updateSettings(settings.copy(autoSubmitAfterFilling = it)) }
+                                scope.launch {
+                                    runCatching {
+                                        automationManager.repository.updateSettings(settings.copy(autoSubmitAfterFilling = it))
+                                    }
+                                }
                             }
                         )
                         HorizontalDivider(Modifier.padding(horizontal = 16.dp))
@@ -515,8 +570,19 @@ fun AutomationScreen(viewModel: BrowserViewModel) {
                             subtitle = "Ask for biometrics before revealing passwords",
                             checked = settings.biometricLockEnabled,
                             onCheckedChange = {
-                                scope.launch { automationManager.repository.updateSettings(settings.copy(biometricLockEnabled = it)) }
+                                scope.launch {
+                                    runCatching {
+                                        automationManager.repository.updateSettings(settings.copy(biometricLockEnabled = it))
+                                    }
+                                }
                             }
+                        )
+                        HorizontalDivider(Modifier.padding(horizontal = 16.dp))
+                        SettingSwitch(
+                            title = "Fallback to phone",
+                            subtitle = "If a form wants email or username but the record has none, use phone number",
+                            checked = fallbackToPhone,
+                            onCheckedChange = { automationManager.fallbackToPhone.value = it }
                         )
                     }
                 }
@@ -554,7 +620,9 @@ fun AutomationScreen(viewModel: BrowserViewModel) {
                                         Text(site, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     },
                                     trailingContent = {
-                                        IconButton(onClick = { viewModel.removeDisabledSite(site) }) {
+                                        IconButton(onClick = {
+                                            runCatching { viewModel.removeDisabledSite(site) }
+                                        }) {
                                             Icon(
                                                 painterResource(R.drawable.ic_close),
                                                 contentDescription = "Remove",
@@ -581,7 +649,7 @@ fun AutomationScreen(viewModel: BrowserViewModel) {
                     Spacer(Modifier.width(8.dp))
                     Text("Wipe all automation data", fontWeight = FontWeight.SemiBold)
                 }
-                Spacer(Modifier.height(80.dp))
+                Spacer(Modifier.height(24.dp))
             }
         }
     }
@@ -616,15 +684,24 @@ fun AutomationScreen(viewModel: BrowserViewModel) {
                         showPasteDialog = false
                         if (text.isNotBlank()) {
                             scope.launch {
-                                val smart = withContext(Dispatchers.Default) {
-                                    AutomationFileAnalyzer.analyzeSmart(text)
-                                }
-                                if (smart.validRecordCount == 0 && smart.format == ContentFormat.UNKNOWN) {
-                                    manualInitialName = "pasted_text"
-                                    snackbar.showSnackbar("Couldn't read the pasted text — opening manual entry.")
-                                    showManualSheet = true
-                                } else {
-                                    pendingResult = "pasted_text.txt" to smart
+                                try {
+                                    val smart = withContext(Dispatchers.Default) {
+                                        runCatching { AutomationFileAnalyzer.analyzeSmart(text) }
+                                            .getOrNull()
+                                    }
+                                    if (smart == null) {
+                                        snackbar.showSnackbar("Couldn't analyse the text.")
+                                    } else if (smart.validRecordCount == 0 &&
+                                        smart.format == ContentFormat.UNKNOWN
+                                    ) {
+                                        manualInitialName = "pasted_text"
+                                        snackbar.showSnackbar("Couldn't read the pasted text — opening manual entry.")
+                                        showManualSheet = true
+                                    } else {
+                                        pendingResult = "pasted_text.txt" to smart
+                                    }
+                                } catch (t: Throwable) {
+                                    snackbar.showSnackbar("Unexpected error: ${t.message}")
                                 }
                             }
                         }
@@ -638,7 +715,7 @@ fun AutomationScreen(viewModel: BrowserViewModel) {
         )
     }
 
-    // ---------------- Add disabled site dialog ----------------
+    // ---------------- Add disabled site ----------------
     if (showAddSite) {
         AlertDialog(
             onDismissRequest = { showAddSite = false },
@@ -658,7 +735,7 @@ fun AutomationScreen(viewModel: BrowserViewModel) {
                         val raw = newSite.trim()
                         if (raw.isNotBlank()) {
                             val d = raw.removePrefix("https://").removePrefix("http://").substringBefore('/')
-                            viewModel.disableAutomationOnSite(d)
+                            runCatching { viewModel.disableAutomationOnSite(d) }
                         }
                         showAddSite = false
                     },
@@ -671,7 +748,7 @@ fun AutomationScreen(viewModel: BrowserViewModel) {
         )
     }
 
-    // ---------------- Wipe confirm dialog ----------------
+    // ---------------- Wipe confirm ----------------
     if (showWipe) {
         AlertDialog(
             onDismissRequest = { showWipe = false },
@@ -681,8 +758,10 @@ fun AutomationScreen(viewModel: BrowserViewModel) {
                 Button(
                     onClick = {
                         scope.launch {
-                            automationManager.repository.wipeAllAutomationData()
-                            automationManager.clearAllPageRecordCaches()
+                            runCatching {
+                                automationManager.repository.wipeAllAutomationData()
+                                automationManager.clearAllPageRecordCaches()
+                            }
                             showWipe = false
                             snackbar.showSnackbar("All automation data wiped")
                         }

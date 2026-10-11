@@ -28,6 +28,10 @@ class AutomationManager(
     val records: StateFlow<List<DatasetRecord>> =
         repository.recordsFlow.stateIn(scope, SharingStarted.Eagerly, emptyList())
 
+    /** When true: if a form asks for email or username but the record has none,
+     *  the phone value is used as a fallback. Toggle from Automation screen. */
+    val fallbackToPhone = MutableStateFlow(true)
+
     val currentFormDetection = MutableStateFlow<FormDetectionInfo?>(null)
     var pendingUsedRecord: DatasetRecord? = null
 
@@ -86,26 +90,6 @@ class AutomationManager(
         repository.saveDatasetWithRecords(dataset, recordEntities)
         repository.setActiveDataset(dataset.id)
         return dataset
-    }
-
-    suspend fun updateColumnLabel(datasetId: String, oldType: String, newLabel: String) {
-        val key = newLabel.trim().lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_')
-        if (key.isBlank()) return
-        val dsRecords = records.value.filter { it.datasetId == datasetId }
-        for (r in dsRecords) {
-            if (r.fields.containsKey(oldType)) {
-                val f = r.fields.toMutableMap()
-                f[key] = f.remove(oldType) ?: ""
-                repository.updateRecord(r.copy(fields = f))
-            }
-        }
-    }
-
-    suspend fun updateRecordField(recordId: String, fieldKey: String, value: String) {
-        val rec = records.value.firstOrNull { it.id == recordId } ?: return
-        val f = rec.fields.toMutableMap()
-        if (value.isBlank()) f.remove(fieldKey) else f[fieldKey] = value
-        repository.updateRecord(rec.copy(fields = f))
     }
 
     // ---------------- Fill helpers ----------------
@@ -187,13 +171,33 @@ class AutomationManager(
         return http && hasPw
     }
 
+    /**
+     * Builds the JS that will run inside the page. When [fallbackToPhone] is true
+     * (or the manager's fallbackToPhone StateFlow is true), email/username
+     * fields that are missing from the record are set to the phone value,
+     * so any form field named email/username receives the phone number.
+     *
+     * The JS side should also handle <select> elements by matching the value
+     * against option text (case-insensitive) — that covers country/state/etc.
+     * dropdowns in the page.
+     */
     fun buildFillScript(
         fields: Map<String, String>,
         highlight: Boolean,
-        autoSubmit: Boolean
+        autoSubmit: Boolean,
+        usePhoneFallback: Boolean = fallbackToPhone.value
     ): String {
+        val enriched = fields.toMutableMap()
+        if (usePhoneFallback) {
+            val phone = fields["phone"]?.takeIf { it.isNotBlank() }
+            if (phone != null) {
+                if (enriched["email"].isNullOrBlank()) enriched["email"] = phone
+                if (enriched["username"].isNullOrBlank()) enriched["username"] = phone
+            }
+        }
+
         val obj = JSONObject()
-        fields.forEach { (k, v) -> obj.put(k, v) }
+        enriched.forEach { (k, v) -> obj.put(k, v) }
         val escaped = obj.toString()
             .replace("\\", "\\\\")
             .replace("'", "\\'")

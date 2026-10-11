@@ -30,6 +30,54 @@
             .trim();
     }
 
+    // ---------------------------------------------------------------------
+    // Find the best-matching <option> inside a <select>.
+    // Strategy (in order of preference):
+    //   1. Exact text match (trimmed, case-insensitive)
+    //   2. Exact value match
+    //   3. Option text CONTAINS target  (e.g. "India" in "India (Republic of)")
+    //   4. Target CONTAINS option text  (reverse of #3)
+    // Returns { index, option } or null.
+    // ---------------------------------------------------------------------
+    function __matchSelect(select, value) {
+        if (!select || value == null) return null;
+        const target = String(value).trim().toLowerCase();
+        if (!target) return null;
+
+        const opts = Array.from(select.options);
+
+        // 1. Exact text match
+        let hit = opts.find(function(o) {
+            return (o.textContent || '').trim().toLowerCase() === target;
+        });
+
+        // 2. Exact value match
+        if (!hit) {
+            hit = opts.find(function(o) {
+                return (o.value || '').trim().toLowerCase() === target;
+            });
+        }
+
+        // 3. Option text contains target
+        if (!hit) {
+            hit = opts.find(function(o) {
+                const t = (o.textContent || '').trim().toLowerCase();
+                return t && t.includes(target);
+            });
+        }
+
+        // 4. Target contains option text
+        if (!hit) {
+            hit = opts.find(function(o) {
+                const t = (o.textContent || '').trim().toLowerCase();
+                return t && target.includes(t);
+            });
+        }
+
+        if (!hit) return null;
+        return { index: opts.indexOf(hit), option: hit };
+    }
+
     const FIELD_SYNONYMS = {
         first_name: ['first name', 'firstname', 'fname', 'given name', 'forename', 'first'],
         last_name: ['last name', 'lastname', 'lname', 'surname', 'family name', 'last'],
@@ -86,7 +134,6 @@
             labelText = el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.getAttribute('title') || '';
         }
         if (!labelText && el.parentElement) {
-            // Check previous sibling or parent header
             const prev = el.previousElementSibling;
             if (prev && (prev.tagName === 'LABEL' || prev.tagName === 'SPAN' || prev.tagName === 'P')) {
                 labelText = prev.textContent.trim();
@@ -105,12 +152,10 @@
         const name = (el.getAttribute('name') || '').toLowerCase();
         const id = (el.getAttribute('id') || '').toLowerCase();
 
-        // Standard search box names
         if (name === 'q' || name === 'query' || name === 's' || name === 'search' || name === 'search_query' || name === 'k' || name === 'keyword') {
             return true;
         }
 
-        // Honeypot indicators
         if (name.includes('honeypot') || id.includes('honeypot') || name.includes('hp_') || id.includes('hp_')) {
             return true;
         }
@@ -118,7 +163,6 @@
             return true;
         }
 
-        // Check off-screen or invisible honeypot styles
         try {
             const style = window.getComputedStyle(el);
             if (style) {
@@ -143,7 +187,6 @@
 
         const combinedText = [labelText, name, id, placeholder, ariaLabel, autocomplete].join(' ');
 
-        // Autocomplete standard hints
         if (autocomplete.includes('given-name')) return 'first_name';
         if (autocomplete.includes('family-name')) return 'last_name';
         if (autocomplete.includes('name') && !autocomplete.includes('username')) return 'full_name';
@@ -159,7 +202,6 @@
         if (autocomplete.includes('postal-code')) return 'zip_code';
         if (autocomplete.includes('country')) return 'country';
 
-        // Check password confirmations specifically
         if (type === 'password') {
             for (let syn of FIELD_SYNONYMS.confirm_password) {
                 if (combinedText.includes(syn)) return 'confirm_password';
@@ -167,12 +209,10 @@
             return 'password';
         }
 
-        // Check email confirmations specifically
         for (let syn of FIELD_SYNONYMS.confirm_email) {
             if (combinedText.includes(syn)) return 'confirm_email';
         }
 
-        // Check all synonym mappings
         for (let key in FIELD_SYNONYMS) {
             const synonyms = FIELD_SYNONYMS[key];
             for (let syn of synonyms) {
@@ -197,7 +237,6 @@
         try {
             const nodes = root.querySelectorAll(selector);
             nodes.forEach(function(node) {
-                // Ignore disabled, readonly, hidden types, honeypots, search boxes
                 if (node.disabled || node.readOnly) return;
                 const type = (node.getAttribute('type') || '').toLowerCase();
                 if (['hidden', 'submit', 'button', 'reset', 'image'].includes(type)) return;
@@ -207,7 +246,6 @@
             });
         } catch (e) {}
 
-        // Traverse open shadow roots
         try {
             const allElements = root.querySelectorAll('*');
             allElements.forEach(function(el) {
@@ -218,7 +256,6 @@
             });
         } catch (e) {}
 
-        // Traverse same-origin iframes
         try {
             const iframes = root.querySelectorAll('iframe');
             iframes.forEach(function(iframe) {
@@ -262,7 +299,6 @@
         }
     }
 
-    // Set value using native prototype setter for React/Vue/Angular
     function setNativeValue(el, val) {
         const isTextArea = el.tagName.toLowerCase() === 'textarea';
         const proto = isTextArea ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
@@ -274,7 +310,6 @@
             el.value = val;
         }
 
-        // Trigger input, change, blur events
         try {
             el.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
             el.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
@@ -282,7 +317,6 @@
         } catch (e) {}
     }
 
-    // Stores previous state for undo capability
     window.__waterfox_undo_state = [];
 
     window.__waterfox_undo_fill = function() {
@@ -306,7 +340,6 @@
         return true;
     };
 
-    // Public Fill Function called from Android
     window.__waterfox_fill_fields = function(fieldValuesJson, highlight, autoSubmit) {
         let valuesMap = {};
         try {
@@ -322,12 +355,21 @@
 
         inputs.forEach(function(input) {
             const fieldType = classifyElement(input);
-            const val = valuesMap[fieldType] || valuesMap[input.name] || valuesMap[input.id];
+            let val = valuesMap[fieldType] || valuesMap[input.name] || valuesMap[input.id];
+
+            // Phone fallback: if the field wants email / username / confirm_email
+            // and we don't have that value but we do have a phone number, use it.
+            if ((val === undefined || val === null || val === '') &&
+                (fieldType === 'email' ||
+                 fieldType === 'confirm_email' ||
+                 fieldType === 'username') &&
+                valuesMap.phone) {
+                val = valuesMap.phone;
+            }
 
             if (val !== undefined && val !== null && val !== '') {
                 const tag = input.tagName.toLowerCase();
 
-                // Save undo record
                 const undoRecord = {
                     element: input,
                     prevValue: input.value || '',
@@ -343,29 +385,31 @@
                     try {
                         input.dispatchEvent(new Event('input', { bubbles: true }));
                     } catch (e) {}
+
                 } else if (tag === 'select') {
-                    let matched = false;
-                    const strVal = String(val).toLowerCase();
-                    for (let i = 0; i < input.options.length; i++) {
-                        const opt = input.options[i];
-                        if (opt.value.toLowerCase() === strVal || opt.text.toLowerCase().includes(strVal)) {
-                            input.selectedIndex = i;
-                            matched = true;
-                            break;
-                        }
+                    const hit = __matchSelect(input, val);
+                    if (hit) {
+                        input.selectedIndex = hit.index;
+                        try {
+                            input.dispatchEvent(new Event('input',  { bubbles: true }));
+                            input.dispatchEvent(new Event('change', { bubbles: true }));
+                            input.dispatchEvent(new Event('blur',   { bubbles: true }));
+                        } catch (e) {}
+                    } else {
+                        try {
+                            input.value = val;
+                            input.dispatchEvent(new Event('input',  { bubbles: true }));
+                            input.dispatchEvent(new Event('change', { bubbles: true }));
+                        } catch (e) {}
                     }
-                    if (!matched && input.options.length > 0) {
-                        input.value = val;
-                    }
-                    try {
-                        input.dispatchEvent(new Event('change', { bubbles: true }));
-                    } catch (e) {}
+
                 } else if (input.type === 'checkbox') {
                     const boolVal = (val === true || val === 'true' || val === '1' || val === 'yes');
                     input.checked = boolVal;
                     try {
                         input.dispatchEvent(new Event('change', { bubbles: true }));
                     } catch (e) {}
+
                 } else if (input.type === 'radio') {
                     if (input.value.toLowerCase() === String(val).toLowerCase()) {
                         input.checked = true;
@@ -373,16 +417,21 @@
                             input.dispatchEvent(new Event('change', { bubbles: true }));
                         } catch (e) {}
                     }
+
                 } else if (input.type === 'date') {
-                    // Normalize date format to yyyy-MM-dd
                     let dateStr = String(val);
                     if (dateStr.includes('/')) {
                         const parts = dateStr.split('/');
                         if (parts.length === 3) {
-                            if (parts[2].length === 4) dateStr = parts[2] + '-' + parts[0].padStart(2, '0') + '-' + parts[1].padStart(2, '0');
+                            if (parts[2].length === 4) {
+                                dateStr = parts[2] + '-' +
+                                          parts[0].padStart(2, '0') + '-' +
+                                          parts[1].padStart(2, '0');
+                            }
                         }
                     }
                     setNativeValue(input, dateStr);
+
                 } else {
                     setNativeValue(input, val);
                 }
@@ -410,13 +459,26 @@
             }
         });
 
-        // Re-apply once if form re-renders or resets within 350ms (common in React/Vue)
+        // Re-apply once if form re-renders or resets within 350ms
         setTimeout(function() {
             inputs.forEach(function(input) {
                 const fieldType = classifyElement(input);
-                const val = valuesMap[fieldType] || valuesMap[input.name] || valuesMap[input.id];
+                let val = valuesMap[fieldType] || valuesMap[input.name] || valuesMap[input.id];
+
+                if ((val === undefined || val === null || val === '') &&
+                    (fieldType === 'email' ||
+                     fieldType === 'confirm_email' ||
+                     fieldType === 'username') &&
+                    valuesMap.phone) {
+                    val = valuesMap.phone;
+                }
+
                 if (val !== undefined && val !== null && val !== '') {
-                    if (!input.isContentEditable && input.type !== 'checkbox' && input.type !== 'radio' && input.tagName.toLowerCase() !== 'select') {
+                    const tag = input.tagName.toLowerCase();
+                    if (!input.isContentEditable &&
+                        input.type !== 'checkbox' &&
+                        input.type !== 'radio' &&
+                        tag !== 'select') {
                         if (input.value === '') {
                             setNativeValue(input, val);
                         }
@@ -448,17 +510,15 @@
         });
     };
 
-    // Debounced, lightweight idle scan observer capped per page load
     let scanTimer = null;
     let scanCount = 0;
     const MAX_PAGE_SCANS = 8;
-    const scheduleIdle = (typeof window.requestIdleCallback === 'function') 
-        ? window.requestIdleCallback 
+    const scheduleIdle = (typeof window.requestIdleCallback === 'function')
+        ? window.requestIdleCallback
         : function(cb) { return setTimeout(cb, 16); };
 
     function runLightweightScan() {
         if (scanCount >= MAX_PAGE_SCANS) return;
-        // Stop scanning pages with more than 5,000 DOM nodes to prevent CPU spikes
         try {
             if (document.getElementsByTagName('*').length > 5000) return;
         } catch (e) {}
