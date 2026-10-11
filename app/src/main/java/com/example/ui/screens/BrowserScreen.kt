@@ -78,7 +78,6 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.example.R
-import androidx.compose.material3.MaterialTheme
 import com.example.browser.Tab
 import com.example.data.database.FavoriteEntity
 import com.example.data.preferences.AddressBarPosition

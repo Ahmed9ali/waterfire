@@ -1,7 +1,6 @@
 package com.example.ui.components
 
 import android.net.Uri
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
