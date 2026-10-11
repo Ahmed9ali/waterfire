@@ -67,8 +67,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
-import com.example.ui.theme.MaterialTheme.colorScheme.primary
-import com.example.ui.theme.MaterialTheme.colorScheme.primaryBright
 import com.example.ui.theme.SuccessGreen
 import com.example.ui.theme.WarningYellow
 import com.example.viewmodel.SearchSuggestion

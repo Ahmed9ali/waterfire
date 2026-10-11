@@ -1,7 +1,6 @@
 package com.example.ui.screens
 
 import android.content.ClipData
-import androidx.compose.material3.MaterialTheme
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
@@ -79,6 +78,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.example.R
+import androidx.compose.material3.MaterialTheme
 import com.example.browser.Tab
 import com.example.data.database.FavoriteEntity
 import com.example.data.preferences.AddressBarPosition
@@ -92,7 +92,6 @@ import com.example.ui.components.PrivacyShieldSheet
 import com.example.ui.components.SearchSuggestionsList
 import com.example.ui.components.WallpaperBackground
 import com.example.ui.components.rememberFavicon
-import com.example.ui.theme.MaterialTheme.colorScheme.primary
 import com.example.ui.theme.PrivateAccent
 import com.example.ui.theme.PrivateBackground
 import com.example.ui.theme.ThemeMode
