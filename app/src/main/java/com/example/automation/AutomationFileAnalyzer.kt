@@ -4,40 +4,83 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.nio.charset.StandardCharsets
 
+enum class ContentFormat(val displayName: String) {
+    JSON("JSON"),
+    NDJSON("JSON Lines"),
+    KEY_VALUE("Key-Value"),
+    DELIMITED("CSV / Delimited"),
+    HTML_TABLE("HTML Table"),
+    XML("XML"),
+    FREE_TEXT("Free Text"),
+    UNKNOWN("Unknown")
+}
+
+data class SmartAnalysisResult(
+    val format: ContentFormat,
+    val formatConfidence: Float,
+    val columns: List<DetectedColumn>,
+    val records: List<Map<String, String>>,
+    val totalLines: Int,
+    val validRecordCount: Int,
+    val skippedLinesCount: Int,
+    val needsUserInput: Boolean = false,
+    val userPrompt: String? = null,
+    val suggestedName: String? = null
+) {
+    fun toLegacy() = FileAnalysisResult(
+        detectedColumns = columns,
+        records = records,
+        totalLines = totalLines,
+        validRecordCount = validRecordCount,
+        skippedLinesCount = skippedLinesCount
+    )
+}
+
 object AutomationFileAnalyzer {
 
-    private const val MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024 // 5 MB
+    private const val MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024
 
     private val EMAIL_REGEX = Regex("^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\$")
     private val PHONE_REGEX = Regex("^(\\+?\\d{1,4}[\\s.-]?)?\\(?\\d{2,4}\\)?[\\s.-]?\\d{3,4}[\\s.-]?\\d{3,4}\$")
     private val URL_REGEX = Regex("^https?://[A-Za-z0-9.-]+(/.*)?\$")
     private val DATE_ISO_REGEX = Regex("^\\d{4}[-/.]\\d{1,2}[-/.]\\d{1,2}\$")
     private val DATE_EU_REGEX = Regex("^\\d{1,2}[-/.]\\d{1,2}[-/.]\\d{4}\$")
+    private val ZIP_REGEX = Regex("^\\d{4,6}(-\\d{3,4})?\$")
 
-    private val SYNONYMS = mapOf(
+    private val EMAIL_FIND = Regex("[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}")
+    private val URL_FIND = Regex("https?://[^\\s]+")
+    private val HANDLE_FIND = Regex("(?<![\\w])@([A-Za-z0-9_.]{2,30})")
+    private val DATE_FIND = Regex("\\b(\\d{4}[-/.]\\d{1,2}[-/.]\\d{1,2}|\\d{1,2}[-/.]\\d{1,2}[-/.]\\d{4})\\b")
+    private val PHONE_FIND = Regex("(\\+\\d{1,3}[\\s.-]?)?(\\(?\\d{2,4}\\)?[\\s.-]?)?\\d{3,4}[\\s.-]?\\d{3,4}")
+    private val PROPER_NAME_FIND = Regex("\\b([A-Z][a-z]{1,20})(\\s+[A-Z][a-z]{1,20}){1,3}\\b")
+
+    private val NAME_STOPWORDS = setOf(
+        "The", "A", "An", "And", "Or", "For", "To", "From", "With", "Of", "In", "On", "At", "By",
+        "Is", "Are", "Was", "Were", "Be", "This", "That", "These", "Those", "It", "We", "You",
+        "He", "She", "They", "Note", "Re", "Fwd"
+    )
+
+    private val SYNONYMS: Map<String, List<String>> = mapOf(
         "first_name" to listOf("first name", "firstname", "fname", "given name", "first"),
         "last_name" to listOf("last name", "lastname", "lname", "surname", "family name", "last"),
-        "full_name" to listOf("full name", "fullname", "name", "customer name", "contact name", "client name"),
+        "full_name" to listOf("full name", "fullname", "name", "customer name", "contact name", "client name", "your name", "display name"),
         "middle_name" to listOf("middle name", "middlename", "mname"),
-        "username" to listOf("username", "user name", "userid", "user id", "login", "handle", "nickname", "user", "account"),
-        "email" to listOf("email", "e mail", "mail", "email address", "e mail address", "user email", "login email"),
-        "confirm_email" to listOf("confirm email", "verify email", "repeat email", "email confirmation", "re enter email"),
-        "password" to listOf("password", "pass", "pwd", "user password", "login password", "secret"),
-        "confirm_password" to listOf("confirm password", "verify password", "repeat password", "password confirmation", "re enter password"),
-        "phone" to listOf("phone", "mobile", "telephone", "tel", "cell", "cellphone", "phone number", "mobile number", "contact number"),
-        "country_code" to listOf("country code", "dial code", "calling code", "phone code"),
+        "username" to listOf("username", "user name", "userid", "user id", "login", "handle", "nickname", "account", "screen name"),
+        "email" to listOf("email", "e mail", "mail", "email address", "user email", "login email", "e-mail"),
+        "confirm_email" to listOf("confirm email", "verify email", "repeat email", "re-enter email"),
+        "password" to listOf("password", "pass", "pwd", "login password", "secret", "passcode"),
+        "confirm_password" to listOf("confirm password", "verify password", "repeat password", "re-enter password"),
+        "phone" to listOf("phone", "mobile", "telephone", "tel", "cell", "phone number", "mobile number", "contact number", "whatsapp", "msisdn"),
+        "country_code" to listOf("country code", "dial code", "calling code"),
         "date_of_birth" to listOf("date of birth", "dob", "birthday", "birth date"),
-        "birth_day" to listOf("birth day", "day of birth", "bday day", "day"),
-        "birth_month" to listOf("birth month", "month of birth", "bday month", "month"),
-        "birth_year" to listOf("birth year", "year of birth", "bday year", "year"),
         "age" to listOf("age", "years old"),
         "gender" to listOf("gender", "sex"),
         "title" to listOf("title", "prefix", "salutation"),
-        "company" to listOf("company", "organization", "organisation", "business", "employer"),
-        "job_title" to listOf("job title", "job", "position", "role", "occupation"),
+        "company" to listOf("company", "organization", "organisation", "business", "employer", "firm"),
+        "job_title" to listOf("job title", "position", "role", "occupation", "designation"),
         "website" to listOf("website", "url", "site", "homepage", "web address"),
         "address_line_1" to listOf("address line 1", "address 1", "street address", "street", "address"),
-        "address_line_2" to listOf("address line 2", "address 2", "apt", "suite", "unit", "building", "apartment", "floor"),
+        "address_line_2" to listOf("address line 2", "address 2", "apt", "suite", "unit", "building", "apartment"),
         "city" to listOf("city", "town", "locality", "municipality"),
         "state" to listOf("state", "province", "region", "county"),
         "zip_code" to listOf("zip code", "zip", "postal code", "postcode", "pin code"),
@@ -45,524 +88,403 @@ object AutomationFileAnalyzer {
         "subject" to listOf("subject", "topic", "heading"),
         "message" to listOf("message", "comment", "feedback", "inquiry", "description", "details", "notes", "body"),
         "rating" to listOf("rating", "score", "stars"),
-        "security_question" to listOf("security question", "security question 1", "secret question", "recovery question"),
-        "security_answer" to listOf("security answer", "security answer 1", "secret answer", "recovery answer", "answer")
+        "security_question" to listOf("security question", "secret question", "recovery question"),
+        "security_answer" to listOf("security answer", "secret answer", "recovery answer", "answer"),
+        "amount" to listOf("amount", "price", "total", "cost", "value"),
+        "id_number" to listOf("id", "id number", "passport", "ssn", "aadhaar", "pan"),
+        "otp" to listOf("otp", "one time password", "verification code", "token", "pin")
     )
+
+    // ---------------- Binary / encoding ----------------
 
     fun isBinaryFile(bytes: ByteArray): Boolean {
         if (bytes.isEmpty()) return false
-        val sampleSize = minOf(bytes.size, 1024)
-        var nullCount = 0
-        for (i in 0 until sampleSize) {
-            if (bytes[i] == 0.toByte()) {
-                nullCount++
-            }
-        }
-        return (nullCount.toFloat() / sampleSize) > 0.05f
+        val n = minOf(bytes.size, 1024)
+        var nulls = 0
+        for (i in 0 until n) if (bytes[i] == 0.toByte()) nulls++
+        return (nulls.toFloat() / n) > 0.05f
     }
 
     fun detectEncodingAndRead(bytes: ByteArray): String {
-        if (bytes.size > MAX_FILE_SIZE_BYTES) {
-            return ""
-        }
-        if (isBinaryFile(bytes)) {
-            return ""
-        }
-
-        // BOM checks
-        if (bytes.size >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte()) {
+        if (bytes.size > MAX_FILE_SIZE_BYTES || isBinaryFile(bytes)) return ""
+        if (bytes.size >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte())
             return String(bytes, 3, bytes.size - 3, StandardCharsets.UTF_8)
-        }
-        if (bytes.size >= 2 && bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte()) {
+        if (bytes.size >= 2 && bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte())
             return String(bytes, 2, bytes.size - 2, StandardCharsets.UTF_16BE)
-        }
-        if (bytes.size >= 2 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xFE.toByte()) {
+        if (bytes.size >= 2 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xFE.toByte())
             return String(bytes, 2, bytes.size - 2, StandardCharsets.UTF_16LE)
-        }
         return try {
             val s = String(bytes, StandardCharsets.UTF_8)
-            if (s.contains("\uFFFD")) {
-                String(bytes, StandardCharsets.ISO_8859_1)
-            } else {
-                s
-            }
-        } catch (e: Exception) {
+            if (s.contains('\uFFFD')) String(bytes, StandardCharsets.ISO_8859_1) else s
+        } catch (_: Exception) {
             String(bytes, StandardCharsets.ISO_8859_1)
         }
     }
 
-    fun analyzeText(content: String): FileAnalysisResult {
-        // Standardize line endings (CRLF -> LF)
-        val normalized = content.replace("\r\n", "\n").replace("\r", "\n")
-        val trimmed = normalized.trim()
-        if (trimmed.isEmpty()) {
-            return FileAnalysisResult(emptyList(), emptyList(), 0, 0, 0)
-        }
+    // ---------------- Public API ----------------
 
-        // 1. Try JSON format
-        if ((trimmed.startsWith("{") && trimmed.endsWith("}")) ||
-            (trimmed.startsWith("[") && trimmed.endsWith("]"))
-        ) {
-            val jsonResult = parseJson(trimmed)
-            if (jsonResult != null && jsonResult.validRecordCount > 0) {
-                return deduplicateRecords(jsonResult)
-            }
-        }
+    fun analyzeText(content: String): FileAnalysisResult = analyzeSmart(content).toLegacy()
 
-        // 2. Try Key-Value blocks (requires block separators and label-like keys)
-        if (isKeyValueBlockFormat(trimmed)) {
-            val kvResult = parseKeyValueBlocks(trimmed)
-            if (kvResult.validRecordCount > 0) {
-                return deduplicateRecords(kvResult)
-            }
-        }
+    fun analyzeSmart(content: String, hint: ContentFormat? = null): SmartAnalysisResult {
+        val text = content.replace("\r\n", "\n").replace("\r", "\n").trim()
+        if (text.isEmpty()) return SmartAnalysisResult(
+            ContentFormat.UNKNOWN, 0f, emptyList(), emptyList(), 0, 0, 0,
+            needsUserInput = true, userPrompt = "Content is empty."
+        )
 
-        // 3. Try CSV / TSV / Delimited
-        val delimitedResult = parseDelimited(trimmed)
-        if (delimitedResult != null && delimitedResult.validRecordCount > 0) {
-            return deduplicateRecords(delimitedResult)
-        }
+        val candidates = mutableListOf<Triple<ContentFormat, Float, SmartAnalysisResult>>()
 
-        // 4. Free-text fallback
-        return deduplicateRecords(parseFreeText(trimmed))
-    }
-
-    private fun deduplicateRecords(result: FileAnalysisResult): FileAnalysisResult {
-        val seen = mutableSetOf<String>()
-        val distinctRecords = mutableListOf<Map<String, String>>()
-        for (r in result.records) {
-            val key = r.entries.sortedBy { it.key }.joinToString("||") { "${it.key}=${it.value.trim()}" }
-            if (key.isNotBlank() && !seen.contains(key)) {
-                seen.add(key)
-                distinctRecords.add(r)
-            }
+        if (text.startsWith("{") || text.startsWith("[")) {
+            parseJson(text)?.let { candidates += Triple(ContentFormat.JSON, 0.95f, it) }
         }
-        return result.copy(
-            records = distinctRecords,
-            validRecordCount = distinctRecords.size
+        if (text.lines().count { it.trim().startsWith("{") && it.trim().endsWith("}") } >= 2) {
+            parseNdjson(text)?.let { candidates += Triple(ContentFormat.NDJSON, 0.9f, it) }
+        }
+        if (text.contains("<table", ignoreCase = true)) {
+            parseHtmlTable(text)?.let { candidates += Triple(ContentFormat.HTML_TABLE, 0.9f, it) }
+        }
+        if (text.startsWith("<") && !text.contains("<table", true)) {
+            parseXml(text)?.let { candidates += Triple(ContentFormat.XML, 0.75f, it) }
+        }
+        if (isKeyValueBlockFormat(text)) {
+            parseKv(text)?.let { candidates += Triple(ContentFormat.KEY_VALUE, 0.85f, it) }
+        }
+        parseDelimited(text)?.let { candidates += Triple(ContentFormat.DELIMITED, 0.88f, it) }
+        candidates += Triple(ContentFormat.FREE_TEXT, 0.4f, parseFreeText(text))
+
+        val best = if (hint != null) candidates.firstOrNull { it.first == hint }
+            ?: candidates.maxByOrNull { it.second }
+        else candidates.maxByOrNull { it.second } ?: candidates.last()
+
+        val (fmt, conf, base) = best
+        val weak = base.validRecordCount == 0 ||
+                base.columns.isEmpty() ||
+                (fmt == ContentFormat.FREE_TEXT && base.columns.size < 2)
+
+        return SmartAnalysisResult(
+            format = fmt,
+            formatConfidence = conf,
+            columns = base.columns,
+            records = base.records,
+            totalLines = base.totalLines,
+            validRecordCount = base.validRecordCount,
+            skippedLinesCount = base.skippedLinesCount,
+            needsUserInput = weak,
+            userPrompt = if (weak) "We couldn't detect the structure with confidence. Confirm the format below."
+            else null,
+            suggestedName = "Imported ${fmt.displayName} ${System.currentTimeMillis() % 100000}"
         )
     }
 
-    private fun normalizeLabel(label: String): String {
-        return label.lowercase()
+    // ---------------- Field inference ----------------
+
+    private fun normalizeLabel(label: String): String =
+        label.lowercase()
             .replace(Regex("[_\\-]+"), " ")
             .replace(Regex("([a-z])([A-Z])"), "$1 $2")
             .replace(Regex("[^a-z0-9 ]"), "")
             .trim()
-    }
 
-    fun inferFieldType(label: String, sampleValues: List<String>): Pair<String, Float> {
-        val normLabel = normalizeLabel(label)
-
-        // 1. Direct synonym matching on label
-        if (normLabel.isNotBlank()) {
-            for ((fieldType, synList) in SYNONYMS) {
-                for (syn in synList) {
-                    if (normLabel == syn || normLabel.contains(syn)) {
-                        return Pair(fieldType, 0.95f)
-                    }
-                }
+    fun inferFieldType(label: String, samples: List<String>): Pair<String, Float> {
+        val norm = normalizeLabel(label)
+        if (norm.isNotBlank()) {
+            for ((field, syns) in SYNONYMS) if (syns.any { norm == it }) return field to 0.97f
+            for ((field, syns) in SYNONYMS) if (syns.any { it.length >= 4 && norm.contains(it) }) return field to 0.82f
+        }
+        var email = 0; var phone = 0; var url = 0; var date = 0; var zip = 0
+        val valid = samples.filter { it.isNotBlank() }
+        for (v in valid) {
+            when {
+                EMAIL_REGEX.matches(v) -> email++
+                URL_REGEX.matches(v) -> url++
+                DATE_ISO_REGEX.matches(v) || DATE_EU_REGEX.matches(v) -> date++
+                PHONE_REGEX.matches(v) && v.length in 7..18 -> phone++
+                ZIP_REGEX.matches(v) -> zip++
             }
         }
-
-        // 2. Value pattern heuristics
-        var emailHits = 0
-        var phoneHits = 0
-        var urlHits = 0
-        var dateHits = 0
-
-        val validSamples = sampleValues.filter { it.isNotBlank() }
-        for (v in validSamples) {
-            if (EMAIL_REGEX.matches(v)) emailHits++
-            else if (URL_REGEX.matches(v)) urlHits++
-            else if (PHONE_REGEX.matches(v) && v.length in 7..18) phoneHits++
-            else if (DATE_ISO_REGEX.matches(v) || DATE_EU_REGEX.matches(v)) dateHits++
-        }
-
-        val total = validSamples.size.coerceAtLeast(1).toFloat()
-        if (emailHits / total >= 0.5f) return Pair("email", 0.9f)
-        if (urlHits / total >= 0.5f) return Pair("website", 0.85f)
-        if (phoneHits / total >= 0.5f) return Pair("phone", 0.8f)
-        if (dateHits / total >= 0.5f) return Pair("date_of_birth", 0.8f)
-
-        // Looks like a password when beside an email/username without explicit label
-        if (normLabel.startsWith("column") && validSamples.any { it.length >= 6 }) {
-            return Pair("password", 0.75f)
-        }
-
-        // Keep raw label as custom field
-        return Pair(if (normLabel.isNotBlank()) normLabel.replace(' ', '_') else "custom", 0.5f)
+        val total = valid.size.coerceAtLeast(1).toFloat()
+        if (email / total >= 0.5f) return "email" to 0.9f
+        if (url / total >= 0.5f) return "website" to 0.85f
+        if (date / total >= 0.5f) return "date_of_birth" to 0.8f
+        if (phone / total >= 0.5f) return "phone" to 0.8f
+        if (zip / total >= 0.6f) return "zip_code" to 0.7f
+        return (norm.replace(' ', '_').ifBlank { "custom" }) to 0.5f
     }
 
     fun deriveMissingFields(record: MutableMap<String, String>) {
-        // Full name from first + last
-        if (!record.containsKey("full_name") || record["full_name"].isNullOrBlank()) {
-            val first = record["first_name"] ?: ""
-            val last = record["last_name"] ?: ""
-            if (first.isNotBlank() || last.isNotBlank()) {
-                record["full_name"] = "$first $last".trim()
-            }
+        if (record["full_name"].isNullOrBlank()) {
+            val f = record["first_name"] ?: ""
+            val l = record["last_name"] ?: ""
+            if (f.isNotBlank() || l.isNotBlank()) record["full_name"] = "$f $l".trim()
         }
-        // Split full name into first + last if missing
-        val fullName = record["full_name"]
-        if (!fullName.isNullOrBlank()) {
+        record["full_name"]?.takeIf { it.isNotBlank() }?.let { full ->
             if (record["first_name"].isNullOrBlank() && record["last_name"].isNullOrBlank()) {
-                val parts = fullName.trim().split(Regex("\\s+"), 2)
-                record["first_name"] = parts.getOrNull(0) ?: ""
-                if (parts.size > 1) {
-                    record["last_name"] = parts[1]
-                }
+                val p = full.trim().split(Regex("\\s+"), 2)
+                record["first_name"] = p.getOrNull(0) ?: ""
+                if (p.size > 1) record["last_name"] = p[1]
             }
         }
-        // Confirm email = email
         record["email"]?.let { if (record["confirm_email"].isNullOrBlank()) record["confirm_email"] = it }
-        // Confirm password = password
         record["password"]?.let { if (record["confirm_password"].isNullOrBlank()) record["confirm_password"] = it }
+    }
 
-        // Date of birth parts
-        record["date_of_birth"]?.let { dob ->
-            val parts = dob.split(Regex("[-/.]"))
-            if (parts.size == 3) {
-                if (parts[0].length == 4) { // yyyy-mm-dd
-                    if (record["birth_year"].isNullOrBlank()) record["birth_year"] = parts[0]
-                    if (record["birth_month"].isNullOrBlank()) record["birth_month"] = parts[1]
-                    if (record["birth_day"].isNullOrBlank()) record["birth_day"] = parts[2]
-                } else if (parts[2].length == 4) { // dd-mm-yyyy or mm-dd-yyyy
-                    if (record["birth_day"].isNullOrBlank()) record["birth_day"] = parts[0]
-                    if (record["birth_month"].isNullOrBlank()) record["birth_month"] = parts[1]
-                    if (record["birth_year"].isNullOrBlank()) record["birth_year"] = parts[2]
-                }
-            }
-        }
+    // ---------------- Helpers ----------------
 
-        // Phone split into country code + phone
-        record["phone"]?.let { phone ->
-            if (phone.startsWith("+") && record["country_code"].isNullOrBlank()) {
-                val spaceIndex = phone.indexOfAny(charArrayOf(' ', '-'))
-                if (spaceIndex in 2..5) {
-                    record["country_code"] = phone.substring(0, spaceIndex)
-                }
-            }
+    private fun dedupe(records: List<Map<String, String>>): List<Map<String, String>> {
+        val seen = HashSet<String>()
+        return records.filter { r ->
+            val k = r.entries.sortedBy { it.key }.joinToString("||") { "${it.key}=${it.value.trim()}" }
+            k.isNotBlank() && seen.add(k)
         }
     }
 
-    private fun isKeyValueBlockFormat(text: String): Boolean {
-        val hasBlockSeparators = text.contains(Regex("(\\n\\s*\\n)+|\\n[-=#]{3,}\\n"))
-        if (!hasBlockSeparators) return false
-        val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() }
-        var labelCount = 0
-        for (line in lines.take(15)) {
-            val key = line.substringBefore(":").substringBefore("=").trim().lowercase()
-            if (key.length in 2..35 && !key.contains("@") && SYNONYMS.keys.any { synKey ->
-                SYNONYMS[synKey]?.any { s -> key == s || key.contains(s) } == true
-            }) {
-                labelCount++
-            }
+    private fun buildResult(
+        rawRecords: List<MutableMap<String, String>>,
+        keys: Collection<String>,
+        text: String
+    ): SmartAnalysisResult {
+        val cols = keys.map { k ->
+            val samples = rawRecords.mapNotNull { it[k] }.take(5)
+            val (type, conf) = inferFieldType(k, samples)
+            DetectedColumn(rawKey = k, normalizedType = type, sampleValues = samples, confidence = conf)
         }
-        return labelCount >= 2
-    }
-
-    private fun parseKeyValueBlocks(text: String): FileAnalysisResult {
-        val rawBlocks = text.split(Regex("(\\n\\s*\\n)+|\\n[-=#]{3,}\\n"))
-        val rawRecords = mutableListOf<Map<String, String>>()
-        val allKeys = LinkedHashSet<String>()
-
-        for (block in rawBlocks) {
-            val recordMap = mutableMapOf<String, String>()
-            for (line in block.lines()) {
-                val trimmedLine = line.trim()
-                if (trimmedLine.isEmpty() || trimmedLine.startsWith("#")) continue
-                val separator = when {
-                    trimmedLine.contains(":") -> ":"
-                    trimmedLine.contains("=") -> "="
-                    trimmedLine.contains(" - ") -> " - "
-                    else -> null
-                }
-                if (separator != null) {
-                    val key = trimmedLine.substringBefore(separator).trim()
-                    val value = trimmedLine.substringAfter(separator).trim()
-                    if (key.isNotEmpty()) {
-                        recordMap[key] = value
-                        allKeys.add(key)
-                    }
-                }
-            }
-            if (recordMap.isNotEmpty()) {
-                rawRecords.add(recordMap)
-            }
+        val mapped = rawRecords.map { rec ->
+            val out = mutableMapOf<String, String>()
+            for (c in cols) rec[c.rawKey]?.takeIf { it.isNotBlank() }?.let { out[c.normalizedType] = it }
+            deriveMissingFields(out)
+            out
         }
-
-        val detectedColumns = allKeys.map { key: String ->
-            val samples = rawRecords.mapNotNull { it[key] }.take(5)
-            val (inferredType, conf) = inferFieldType(key, samples)
-            DetectedColumn(
-                rawKey = key,
-                normalizedType = inferredType,
-                sampleValues = samples,
-                confidence = conf
-            )
-        }
-
-        val mappedRecords = rawRecords.map { rec: Map<String, String> ->
-            val mapped = mutableMapOf<String, String>()
-            for (col in detectedColumns) {
-                val value = rec[col.rawKey] ?: ""
-                if (value.isNotBlank()) {
-                    mapped[col.normalizedType] = value
-                }
-            }
-            deriveMissingFields(mapped)
-            mapped
-        }
-
-        return FileAnalysisResult(
-            detectedColumns = detectedColumns,
-            records = mappedRecords,
+        val distinct = dedupe(mapped)
+        return SmartAnalysisResult(
+            format = ContentFormat.UNKNOWN, formatConfidence = 0f,
+            columns = cols, records = distinct,
             totalLines = text.lines().size,
-            validRecordCount = mappedRecords.size,
+            validRecordCount = distinct.size,
             skippedLinesCount = 0
         )
     }
 
-    private fun parseDelimited(text: String): FileAnalysisResult? {
+    private fun stripHtml(s: String) = s.replace(Regex("<[^>]+>"), "")
+        .replace("&nbsp;", " ").replace("&amp;", "&")
+        .replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"")
+
+    // ---------------- JSON ----------------
+
+    private fun parseJson(text: String): SmartAnalysisResult? = try {
+        val arr = if (text.startsWith("[")) JSONArray(text) else JSONArray().put(JSONObject(text))
+        val raw = mutableListOf<MutableMap<String, String>>()
+        val keys = LinkedHashSet<String>()
+        for (i in 0 until arr.length()) {
+            val obj = arr.optJSONObject(i) ?: continue
+            val flat = mutableMapOf<String, String>()
+            flattenJson("", obj, flat)
+            if (flat.isNotEmpty()) { raw += flat; keys += flat.keys }
+        }
+        if (raw.isEmpty()) null else buildResult(raw, keys, text)
+    } catch (_: Exception) { null }
+
+    private fun flattenJson(prefix: String, obj: JSONObject, out: MutableMap<String, String>) {
+        val it = obj.keys()
+        while (it.hasNext()) {
+            val k = it.next()
+            val full = if (prefix.isEmpty()) k else "$prefix.$k"
+            val v = obj.opt(k)
+            when (v) {
+                is JSONObject -> flattenJson(full, v, out)
+                is JSONArray -> for (i in 0 until v.length()) {
+                    val item = v.opt(i)
+                    if (item !is JSONObject && item !is JSONArray) out["$full[$i]"] = item.toString()
+                }
+                null -> {}
+                else -> out[full] = v.toString()
+            }
+        }
+    }
+
+    private fun parseNdjson(text: String): SmartAnalysisResult? = try {
+        val raw = mutableListOf<MutableMap<String, String>>()
+        val keys = LinkedHashSet<String>()
+        for (line in text.lines()) {
+            val t = line.trim()
+            if (!t.startsWith("{") || !t.endsWith("}")) continue
+            val flat = mutableMapOf<String, String>()
+            flattenJson("", JSONObject(t), flat)
+            if (flat.isNotEmpty()) { raw += flat; keys += flat.keys }
+        }
+        if (raw.isEmpty()) null else buildResult(raw, keys, text)
+    } catch (_: Exception) { null }
+
+    // ---------------- HTML / XML ----------------
+
+    private fun parseHtmlTable(text: String): SmartAnalysisResult? {
+        val rows = Regex("<tr[^>]*>(.*?)</tr>", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
+            .findAll(text).map { it.groupValues[1] }.toList()
+        if (rows.size < 2) return null
+        val cellRe = Regex("<t[dh][^>]*>(.*?)</t[dh]>", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
+        val rowsCells = rows.map { r -> cellRe.findAll(r).map { stripHtml(it.groupValues[1]).trim() }.toList() }
+            .filter { it.isNotEmpty() }
+        if (rowsCells.size < 2) return null
+        val headers = rowsCells.first().mapIndexed { i, h -> h.ifBlank { "Column ${i + 1}" } }
+        val raw = rowsCells.drop(1).map { cells ->
+            val m = mutableMapOf<String, String>()
+            headers.forEachIndexed { i, h -> if (i < cells.size) m[h] = cells[i] }
+            m
+        }.toMutableList()
+        return buildResult(raw, headers, text)
+    }
+
+    private fun parseXml(text: String): SmartAnalysisResult? {
+        val tagRe = Regex("<([A-Za-z_][\\w.-]*)(?:\\s[^>]*)?>(.*?)</\\1>", setOf(RegexOption.DOT_MATCHES_ALL))
+        val top = tagRe.findAll(text).map { it.groupValues[1] to it.groupValues[2] }.toList()
+        if (top.size < 2) return null
+        val recordTag = top.groupBy { it.first }.maxByOrNull { it.value.size }?.takeIf { it.value.size >= 2 }?.key ?: return null
+        val raw = mutableListOf<MutableMap<String, String>>()
+        val keys = LinkedHashSet<String>()
+        for ((_, inner) in top.filter { it.first == recordTag }) {
+            val m = mutableMapOf<String, String>()
+            tagRe.findAll(inner).forEach { mr ->
+                val k = mr.groupValues[1]
+                m[k] = stripHtml(mr.groupValues[2]).trim()
+                keys += k
+            }
+            if (m.isNotEmpty()) raw += m
+        }
+        if (raw.isEmpty()) return null
+        return buildResult(raw, keys, text)
+    }
+
+    // ---------------- KV ----------------
+
+    private fun isKeyValueBlockFormat(text: String): Boolean {
+        if (!text.contains(Regex("(\\n\\s*\\n)+|\\n[-=#]{3,}\\n"))) return false
         val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() }
-        if (lines.isEmpty()) return null
+        var count = 0
+        for (l in lines.take(20)) {
+            val k = l.substringBefore(":").substringBefore("=").trim().lowercase()
+            if (k.length in 2..40 && !k.contains("@") &&
+                SYNONYMS.values.any { syns -> syns.any { k == it || k.contains(it) } }) count++
+        }
+        return count >= 2
+    }
 
-        val candidateDelimiters = listOf(',', ';', '\t', '|', ':')
-        var bestDelimiter: Char? = null
-        var maxCount = 0
+    private fun parseKv(text: String): SmartAnalysisResult? {
+        val blocks = text.split(Regex("(\\n\\s*\\n)+|\\n[-=#]{3,}\\n"))
+        val raw = mutableListOf<MutableMap<String, String>>()
+        val keys = LinkedHashSet<String>()
+        for (b in blocks) {
+            val rec = mutableMapOf<String, String>()
+            for (line in b.lines()) {
+                val t = line.trim()
+                if (t.isEmpty() || t.startsWith("#")) continue
+                val sep = when {
+                    t.contains(":") -> ":"
+                    t.contains("=") -> "="
+                    t.contains(" - ") -> " - "
+                    else -> null
+                } ?: continue
+                val k = t.substringBefore(sep).trim()
+                val v = t.substringAfter(sep).trim()
+                if (k.isNotEmpty() && v.isNotEmpty()) { rec[k] = v; keys += k }
+            }
+            if (rec.isNotEmpty()) raw += rec
+        }
+        if (raw.isEmpty()) return null
+        return buildResult(raw, keys, text)
+    }
 
-        for (d in candidateDelimiters) {
-            // Check if delimiter appears consistently across at least half of the first few lines
-            val sampleLines = lines.take(5)
-            val countFirst = sampleLines.first().count { it == d }
-            if (countFirst > 0) {
-                val consistentCount = sampleLines.count { it.count { c -> c == d } > 0 }
-                if (consistentCount >= (sampleLines.size / 2).coerceAtLeast(1) && countFirst > maxCount) {
-                    // If colon, check it's not prose with colons (e.g. "Note: hello world this is long")
-                    if (d == ':') {
-                        val partBefore = sampleLines.first().substringBefore(':').trim()
-                        val partAfter = sampleLines.first().substringAfter(':').trim()
-                        if (partBefore.contains(' ') && partBefore.split(' ').size > 3) {
-                            continue
-                        }
-                    }
-                    maxCount = countFirst
-                    bestDelimiter = d
+    // ---------------- Delimited ----------------
+
+    private fun parseDelimited(text: String): SmartAnalysisResult? {
+        val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() }
+        if (lines.size < 2) return null
+        val candidates = listOf(',', ';', '\t', '|', ':')
+        var best: Char? = null
+        var bestCount = 0
+        for (d in candidates) {
+            val sample = lines.take(8)
+            val count = sample.first().count { it == d }
+            if (count == 0) continue
+            val consistent = sample.count { it.count { c -> c == d } > 0 }
+            if (consistent >= (sample.size / 2).coerceAtLeast(1) && count > bestCount) {
+                if (d == ':') {
+                    val before = sample.first().substringBefore(':').trim()
+                    if (before.contains(' ') && before.split(' ').size > 3) continue
                 }
+                best = d; bestCount = count
             }
         }
-
-        // Only consider space if no standard delimiter exists and lines look like 2-5 clean tabular tokens
-        if (bestDelimiter == null) {
-            val sampleLines = lines.take(5)
-            val proseWords = listOf("the", "at", "or", "and", "is", "for", "with", "call", "contact")
-            val hasProse = sampleLines.any { line -> proseWords.any { w -> line.contains(" $w ", ignoreCase = true) } }
-            if (!hasProse) {
-                val spaceTokensCount = sampleLines.map { it.split(Regex("\\s+")).size }
-                if (spaceTokensCount.all { it in 2..6 } && spaceTokensCount.distinct().size <= 2) {
-                    bestDelimiter = ' '
-                }
-            }
-        }
-
-        if (bestDelimiter == null) {
-            return null
-        }
-
-        val delimiter = bestDelimiter
-        val firstLineParts = splitLine(lines[0], delimiter)
-        val hasLetterHeader = firstLineParts.all { part -> part.any { it.isLetter() } && !EMAIL_REGEX.matches(part) }
-
+        val delim = best ?: return null
+        val firstParts = splitLine(lines[0], delim)
+        val hasHeader = firstParts.all { p -> p.any { it.isLetter() } && !EMAIL_REGEX.matches(p) }
         val headers: List<String>
         val dataLines: List<String>
+        if (hasHeader && lines.size > 1) { headers = firstParts; dataLines = lines.drop(1) }
+        else { headers = (1..firstParts.size).map { "Column $it" }; dataLines = lines }
 
-        if (hasLetterHeader && lines.size > 1) {
-            headers = firstLineParts
-            dataLines = lines.drop(1)
-        } else {
-            headers = (1..firstLineParts.size).map { "Column $it" }
-            dataLines = lines
-        }
-
-        val rawRecords = mutableListOf<Map<String, String>>()
+        val raw = mutableListOf<MutableMap<String, String>>()
         for (line in dataLines) {
-            val parts = splitLine(line, delimiter)
-            if (parts.isNotEmpty()) {
-                val map = mutableMapOf<String, String>()
-                for (i in headers.indices) {
-                    if (i < parts.size) {
-                        map[headers[i]] = parts[i]
-                    }
-                }
-                rawRecords.add(map)
-            }
+            val parts = splitLine(line, delim)
+            if (parts.isEmpty()) continue
+            val m = mutableMapOf<String, String>()
+            headers.forEachIndexed { i, h -> if (i < parts.size) m[h] = parts[i] }
+            raw += m
         }
-
-        val detectedColumns = headers.map { h ->
-            val samples = rawRecords.mapNotNull { it[h] }.take(5)
-            val (inferredType, conf) = inferFieldType(h, samples)
-            DetectedColumn(
-                rawKey = h,
-                normalizedType = inferredType,
-                sampleValues = samples,
-                confidence = conf
-            )
-        }
-
-        val mappedRecords = rawRecords.map { rec ->
-            val mapped = mutableMapOf<String, String>()
-            for (col in detectedColumns) {
-                val value = rec[col.rawKey] ?: ""
-                if (value.isNotBlank()) {
-                    mapped[col.normalizedType] = value
-                }
-            }
-            deriveMissingFields(mapped)
-            mapped
-        }
-
-        return FileAnalysisResult(
-            detectedColumns = detectedColumns,
-            records = mappedRecords,
-            totalLines = lines.size,
-            validRecordCount = mappedRecords.size,
-            skippedLinesCount = lines.size - dataLines.size
-        )
+        if (raw.isEmpty()) return null
+        return buildResult(raw, headers, text)
     }
 
-    private fun splitLine(line: String, delimiter: Char): List<String> {
-        val result = mutableListOf<String>()
-        var inQuotes = false
+    private fun splitLine(line: String, delim: Char): List<String> {
+        val out = mutableListOf<String>()
+        var inQ = false
         val sb = StringBuilder()
-
-        for (ch in line) {
-            if (ch == '\"') {
-                inQuotes = !inQuotes
-            } else if (ch == delimiter && !inQuotes) {
-                result.add(sb.toString().trim())
-                sb.setLength(0)
-            } else {
-                sb.append(ch)
+        for (c in line) {
+            when {
+                c == '"' -> inQ = !inQ
+                c == delim && !inQ -> { out += sb.toString().trim(); sb.setLength(0) }
+                else -> sb.append(c)
             }
         }
-        result.add(sb.toString().trim())
-        return result
+        out += sb.toString().trim()
+        return out
     }
 
-    private fun parseJson(text: String): FileAnalysisResult? {
-        return try {
-            val jsonArray = if (text.startsWith("[")) {
-                JSONArray(text)
-            } else {
-                JSONArray().put(JSONObject(text))
-            }
+    // ---------------- Free text ----------------
 
-            val rawRecords = mutableListOf<Map<String, String>>()
-            val allKeys = LinkedHashSet<String>()
-
-            for (i in 0 until jsonArray.length()) {
-                val obj = jsonArray.optJSONObject(i) ?: continue
-                val flatMap = mutableMapOf<String, String>()
-                flattenJsonObject("", obj, flatMap)
-                rawRecords.add(flatMap)
-                allKeys.addAll(flatMap.keys)
-            }
-
-            val detectedColumns = allKeys.map { key: String ->
-                val samples = rawRecords.mapNotNull { it[key] }.take(5)
-                val (inferredType, conf) = inferFieldType(key, samples)
-                DetectedColumn(
-                    rawKey = key,
-                    normalizedType = inferredType,
-                    sampleValues = samples,
-                    confidence = conf
-                )
-            }
-
-            val mappedRecords = rawRecords.map { rec: Map<String, String> ->
-                val mapped = mutableMapOf<String, String>()
-                for (col in detectedColumns) {
-                    val value = rec[col.rawKey] ?: ""
-                    if (value.isNotBlank()) {
-                        mapped[col.normalizedType] = value
-                        val leaf = col.rawKey.substringAfterLast('.')
-                        val (leafType, _) = inferFieldType(leaf, listOf(value))
-                        if (leafType.isNotBlank() && !mapped.containsKey(leafType)) {
-                            mapped[leafType] = value
-                        }
-                    }
-                }
-                deriveMissingFields(mapped)
-                mapped
-            }
-
-            FileAnalysisResult(
-                detectedColumns = detectedColumns,
-                records = mappedRecords,
-                totalLines = text.lines().size,
-                validRecordCount = mappedRecords.size,
-                skippedLinesCount = 0
-            )
-        } catch (e: Exception) {
-            null
-        }
+    private fun parseFreeText(text: String): SmartAnalysisResult {
+        val paragraphs = text.split(Regex("(\\n\\s*\\n)+")).map { it.trim() }.filter { it.isNotEmpty() }
+        val raw = mutableListOf<MutableMap<String, String>>()
+        if (paragraphs.size >= 2) for (p in paragraphs) raw += extractBlock(p)
+        else raw += extractBlock(text)
+        raw.removeAll { it.isEmpty() }
+        val keys = LinkedHashSet<String>().also { k -> raw.forEach { k += it.keys } }
+        return buildResult(raw, keys, text)
     }
 
-    private fun flattenJsonObject(prefix: String, obj: JSONObject, outMap: MutableMap<String, String>) {
-        val keys = obj.keys()
-        while (keys.hasNext()) {
-            val key = keys.next()
-            val fullKey = if (prefix.isEmpty()) key else "$prefix.$key"
-            val value = obj.opt(key)
-            if (value is JSONObject) {
-                flattenJsonObject(fullKey, value, outMap)
-            } else if (value != null && value !is JSONArray) {
-                outMap[fullKey] = value.toString()
+    private fun extractBlock(block: String): MutableMap<String, String> {
+        val m = mutableMapOf<String, String>()
+        EMAIL_FIND.find(block)?.let { m["email"] = it.value }
+        URL_FIND.find(block)?.let { m["website"] = it.value }
+        HANDLE_FIND.find(block)?.let { m["username"] = it.groupValues[1] }
+        DATE_FIND.find(block)?.let { m["date_of_birth"] = it.value }
+        PHONE_FIND.findAll(block).map { it.value.trim() }
+            .filter { it.length in 7..25 && it.count { c -> c.isDigit() } >= 6 }
+            .maxByOrNull { it.length }?.let { m["phone"] = it }
+        PROPER_NAME_FIND.findAll(block).map { it.value.trim() }
+            .firstOrNull { cand ->
+                val words = cand.split(' ')
+                words.size in 2..4 && words.none { it in NAME_STOPWORDS }
+            }?.let { m["full_name"] = it }
+        for (line in block.lines()) {
+            val t = line.trim()
+            val sep = when { t.contains(":") -> ":"; t.contains("=") -> "="; else -> null } ?: continue
+            val k = t.substringBefore(sep).trim()
+            val v = t.substringAfter(sep).trim()
+            if (k.length in 2..40 && v.isNotEmpty() && !EMAIL_REGEX.matches(k)) {
+                val (type, _) = inferFieldType(k, listOf(v))
+                if (type != "custom" && !m.containsKey(type)) m[type] = v
             }
         }
-    }
-
-    private fun parseFreeText(text: String): FileAnalysisResult {
-        val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() }
-        val rawRecords = mutableListOf<Map<String, String>>()
-
-        val emailFindRegex = Regex("[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}")
-        val phoneFindRegex = Regex("(?:\\+\\d{1,3}[\\s.-]?)?(?:\\(?\\d{2,4}\\)?[\\s.-]?)?\\d{3,4}[\\s.-]?\\d{3,4}")
-
-        for (line in lines) {
-            val map = mutableMapOf<String, String>()
-            emailFindRegex.find(line)?.let {
-                map["email"] = it.value
-            }
-            phoneFindRegex.find(line)?.let {
-                val candidate = it.value.trim()
-                if (candidate.length in 7..25 && candidate.any { c -> c.isDigit() }) {
-                    map["phone"] = candidate
-                }
-            }
-            if (map.isNotEmpty()) {
-                deriveMissingFields(map)
-                rawRecords.add(map)
-            }
-        }
-
-        val allKeys = rawRecords.flatMap { it.keys }.distinct()
-        val detectedColumns = allKeys.map { key ->
-            DetectedColumn(
-                rawKey = key,
-                normalizedType = key,
-                sampleValues = rawRecords.mapNotNull { it[key] }.take(5),
-                confidence = 0.9f
-            )
-        }
-
-        return FileAnalysisResult(
-            detectedColumns = detectedColumns,
-            records = rawRecords,
-            totalLines = lines.size,
-            validRecordCount = rawRecords.size,
-            skippedLinesCount = lines.size - rawRecords.size
-        )
+        if (m.isNotEmpty()) deriveMissingFields(m)
+        return m
     }
 }

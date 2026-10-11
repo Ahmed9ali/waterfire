@@ -1,10 +1,10 @@
 package com.example.automation.ui
 
-import androidx.compose.foundation.background
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -15,37 +15,42 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Divider
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.automation.Dataset
 import com.example.automation.DatasetRecord
@@ -54,6 +59,13 @@ import com.example.ui.theme.BrandOrange
 import com.example.ui.theme.DangerRed
 import com.example.ui.theme.SuccessGreen
 
+private enum class RecordFilter(val label: String) {
+    All("All"),
+    Unused("Unused"),
+    Used("Used")
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DatasetDetailScreen(
     dataset: Dataset,
@@ -67,274 +79,239 @@ fun DatasetDetailScreen(
     onUpdateRecord: (DatasetRecord) -> Unit,
     onDeleteRecord: (String) -> Unit
 ) {
-    var searchQuery by remember { mutableStateOf("") }
-    var showAddRecordDialog by remember { mutableStateOf(false) }
-    var editingRecord by remember { mutableStateOf<DatasetRecord?>(null) }
-    var showUsageModeDropdown by remember { mutableStateOf(false) }
+    var search by remember { mutableStateOf("") }
+    var filter by remember { mutableStateOf(RecordFilter.All) }
+    var showUsageMenu by remember { mutableStateOf(false) }
     var showRenameDialog by remember { mutableStateOf(false) }
     var renameInput by remember { mutableStateOf(dataset.name) }
-    var showDeleteConfirmDialog by remember { mutableStateOf(false) }
-    var showConfigToggles by remember { mutableStateOf(false) }
+    var showDeleteDs by remember { mutableStateOf(false) }
+    var editingRecord by remember { mutableStateOf<DatasetRecord?>(null) }
+    var addingRecord by remember { mutableStateOf(false) }
+    var showToggles by remember { mutableStateOf(false) }
 
-    val filteredRecords = remember(records, searchQuery) {
-        if (searchQuery.isBlank()) records
-        else records.filter { r ->
-            r.fields.values.any { it.contains(searchQuery, ignoreCase = true) }
+    BackHandler { onBack() }
+
+    val filtered = remember(records, search, filter) {
+        records.filter { r ->
+            val matchesFilter = when (filter) {
+                RecordFilter.All -> true
+                RecordFilter.Unused -> !r.isUsed
+                RecordFilter.Used -> r.isUsed
+            }
+            val matchesSearch = search.isBlank() ||
+                    r.fields.values.any { it.contains(search, ignoreCase = true) }
+            matchesFilter && matchesSearch
         }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-    ) {
-        // Top Bar
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(onClick = onBack) {
-                Icon(
-                    painter = painterResource(id = R.drawable.ic_arrow_back),
-                    contentDescription = "Back",
-                    tint = MaterialTheme.colorScheme.onSurface
-                )
-            }
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .clickable {
-                        renameInput = dataset.name
-                        showRenameDialog = true
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(painterResource(R.drawable.ic_arrow_back), contentDescription = "Back")
                     }
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = dataset.name,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Icon(
-                        painter = painterResource(id = R.drawable.ic_edit),
-                        contentDescription = "Rename dataset",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(14.dp)
-                    )
-                }
-                Text(
-                    text = "${records.count { !it.isUsed }} of ${records.size} unused",
-                    fontSize = 12.sp,
-                    color = BrandOrange
-                )
-            }
-
-            IconButton(onClick = { showAddRecordDialog = true }) {
-                Icon(
-                    painter = painterResource(id = R.drawable.ic_add),
-                    contentDescription = "Add record",
-                    tint = BrandOrange
-                )
-            }
-
-            IconButton(onClick = { showDeleteConfirmDialog = true }) {
-                Icon(
-                    painter = painterResource(id = R.drawable.ic_delete),
-                    contentDescription = "Delete dataset",
-                    tint = DangerRed
-                )
-            }
-        }
-
-        // Search Bar
-        OutlinedTextField(
-            value = searchQuery,
-            onValueChange = { searchQuery = it },
-            placeholder = { Text("Search records...") },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 4.dp),
-            singleLine = true
-        )
-
-        // Config & Mode Row
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box {
-                Button(
-                    onClick = { showUsageModeDropdown = true },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                ) {
-                    Text(
-                        text = "Mode: ${dataset.usageMode.displayName}",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                DropdownMenu(
-                    expanded = showUsageModeDropdown,
-                    onDismissRequest = { showUsageModeDropdown = false }
-                ) {
-                    UsageMode.values().forEach { mode ->
-                        DropdownMenuItem(
-                            text = { Text(mode.displayName) },
-                            onClick = {
-                                onUpdateDataset(dataset.copy(usageMode = mode))
-                                showUsageModeDropdown = false
-                            }
+                },
+                title = {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            dataset.name,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            "${records.count { !it.isUsed }} of ${records.size} unused • Record ${dataset.currentIndex + 1}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = BrandOrange
                         )
                     }
+                },
+                actions = {
+                    IconButton(onClick = { renameInput = dataset.name; showRenameDialog = true }) {
+                        Icon(painterResource(R.drawable.ic_edit), contentDescription = "Rename")
+                    }
+                    IconButton(onClick = { showDeleteDs = true }) {
+                        Icon(painterResource(R.drawable.ic_delete), contentDescription = "Delete", tint = DangerRed)
+                    }
                 }
-            }
-
-            Row {
-                TextButton(onClick = onMarkAllUnused) {
-                    Text("Mark all unused", fontSize = 12.sp, color = BrandOrange)
-                }
-                TextButton(onClick = onResetPointer) {
-                    Text("Reset pointer", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-        }
-
-        // Toggles Accordion
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { showConfigToggles = !showConfigToggles }
-                .padding(horizontal = 16.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Text(
-                text = if (showConfigToggles) "Hide dataset toggles" else "Configure toggles & loop options",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Medium,
-                color = BrandOrange
+            )
+        },
+        floatingActionButton = {
+            ExtendedFloatingActionButton(
+                onClick = { addingRecord = true },
+                containerColor = BrandOrange,
+                contentColor = Color.White,
+                icon = { Icon(painterResource(R.drawable.ic_add), contentDescription = null) },
+                text = { Text("Add record") }
             )
         }
-
-        if (showConfigToggles) {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-            ) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Skip already used records", fontSize = 13.sp)
-                        Switch(
-                            checked = dataset.skipAlreadyUsed,
-                            onCheckedChange = { onUpdateDataset(dataset.copy(skipAlreadyUsed = it)) },
-                            colors = SwitchDefaults.colors(checkedThumbColor = BrandOrange)
-                        )
-                    }
-                    Divider(modifier = Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Delete record after use", fontSize = 13.sp)
-                        Switch(
-                            checked = dataset.deleteAfterUse,
-                            onCheckedChange = { onUpdateDataset(dataset.copy(deleteAfterUse = it)) },
-                            colors = SwitchDefaults.colors(checkedThumbColor = BrandOrange)
-                        )
-                    }
-                    Divider(modifier = Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Loop when finished", fontSize = 13.sp)
-                        Switch(
-                            checked = dataset.loopBackToStart,
-                            onCheckedChange = { onUpdateDataset(dataset.copy(loopBackToStart = it)) },
-                            colors = SwitchDefaults.colors(checkedThumbColor = BrandOrange)
-                        )
-                    }
-                    Divider(modifier = Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Mark used on submit", fontSize = 13.sp)
-                            Text("Only mark after form submitted (otherwise marks on fill)", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        Switch(
-                            checked = dataset.markAsUsedOnSubmit,
-                            onCheckedChange = { onUpdateDataset(dataset.copy(markAsUsedOnSubmit = it)) },
-                            colors = SwitchDefaults.colors(checkedThumbColor = BrandOrange)
-                        )
-                    }
-                }
-            }
-        }
-
-        Divider(modifier = Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-
-        // Records List
+    ) { padding ->
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 16.dp)
+                .padding(padding),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            items(filteredRecords, key = { it.id }) { record ->
-                RecordItemCard(
-                    record = record,
-                    onEdit = { editingRecord = record },
-                    onDelete = { onDeleteRecord(record.id) }
-                )
-                Spacer(modifier = Modifier.height(8.dp))
+            // ---------- Usage mode card ----------
+            item {
+                Card(shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
+                    Column {
+                        ListItem(
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                            headlineContent = { Text("Usage mode", fontWeight = FontWeight.SemiBold) },
+                            supportingContent = { Text(dataset.usageMode.displayName) },
+                            trailingContent = {
+                                TextButton(onClick = { showUsageMenu = !showUsageMenu }) {
+                                    Text("Change", color = BrandOrange)
+                                }
+                            }
+                        )
+                        if (showUsageMenu) {
+                            UsageMode.entries.forEach { m ->
+                                HorizontalDivider(Modifier.padding(horizontal = 16.dp))
+                                ListItem(
+                                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                                    headlineContent = { Text(m.displayName) },
+                                    trailingContent = {
+                                        if (m == dataset.usageMode) Icon(
+                                            painterResource(R.drawable.ic_check),
+                                            contentDescription = null,
+                                            tint = SuccessGreen
+                                        )
+                                    },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            onUpdateDataset(dataset.copy(usageMode = m))
+                                            showUsageMenu = false
+                                        }
+                                )
+                            }
+                        }
+                    }
+                }
             }
+
+            // ---------- Reset card ----------
+            item {
+                Card(shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
+                    ListItem(
+                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                        headlineContent = { Text("Reset progress", fontWeight = FontWeight.SemiBold) },
+                        supportingContent = { Text("Mark every record unused & reset pointer") },
+                        trailingContent = {
+                            Row {
+                                TextButton(onClick = onMarkAllUnused) {
+                                    Text("Unused", color = BrandOrange)
+                                }
+                                TextButton(onClick = onResetPointer) {
+                                    Text("Pointer", color = BrandOrange)
+                                }
+                            }
+                        }
+                    )
+                }
+            }
+
+            // ---------- Toggles card ----------
+            item {
+                Card(shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
+                    Column {
+                        ListItem(
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                            headlineContent = { Text("Advanced toggles", fontWeight = FontWeight.SemiBold) },
+                            trailingContent = {
+                                TextButton(onClick = { showToggles = !showToggles }) {
+                                    Text(if (showToggles) "Hide" else "Show", color = BrandOrange)
+                                }
+                            }
+                        )
+                        if (showToggles) {
+                            DetailToggle("Skip already used", dataset.skipAlreadyUsed) {
+                                onUpdateDataset(dataset.copy(skipAlreadyUsed = it))
+                            }
+                            DetailToggle("Delete after use", dataset.deleteAfterUse) {
+                                onUpdateDataset(dataset.copy(deleteAfterUse = it))
+                            }
+                            DetailToggle("Loop when finished", dataset.loopBackToStart) {
+                                onUpdateDataset(dataset.copy(loopBackToStart = it))
+                            }
+                            DetailToggle("Mark used only on submit", dataset.markAsUsedOnSubmit) {
+                                onUpdateDataset(dataset.copy(markAsUsedOnSubmit = it))
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ---------- Search + filters ----------
+            item {
+                OutlinedTextField(
+                    value = search,
+                    onValueChange = { search = it },
+                    placeholder = { Text("Search records…") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+            item {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    RecordFilter.entries.forEach { f ->
+                        FilterChip(
+                            selected = filter == f,
+                            onClick = { filter = f },
+                            label = { Text(f.label) }
+                        )
+                    }
+                }
+            }
+
+            // ---------- Records ----------
+            if (filtered.isEmpty()) {
+                item {
+                    Text(
+                        "No records match.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            } else {
+                items(filtered, key = { it.id }) { r ->
+                    RecordCard(r, onEdit = { editingRecord = r }, onDelete = { onDeleteRecord(r.id) })
+                }
+            }
+
+            item { Spacer(Modifier.height(80.dp)) }
         }
     }
 
-    // Rename Dataset Dialog
+    // ---------------- Rename dialog ----------------
     if (showRenameDialog) {
         AlertDialog(
             onDismissRequest = { showRenameDialog = false },
-            title = { Text("Rename Dataset") },
+            title = { Text("Rename dataset") },
             text = {
                 OutlinedTextField(
                     value = renameInput,
                     onValueChange = { renameInput = it },
-                    label = { Text("Dataset Name") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
+                    label = { Text("Name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
                 )
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        if (renameInput.isNotBlank()) {
-                            onUpdateDataset(dataset.copy(name = renameInput.trim()))
-                        }
+                        if (renameInput.isNotBlank()) onUpdateDataset(dataset.copy(name = renameInput.trim()))
                         showRenameDialog = false
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = BrandOrange)
-                ) {
-                    Text("Save")
-                }
+                ) { Text("Save") }
             },
             dismissButton = {
                 TextButton(onClick = { showRenameDialog = false }) { Text("Cancel") }
@@ -342,184 +319,211 @@ fun DatasetDetailScreen(
         )
     }
 
-    // Delete Dataset Confirmation Dialog
-    if (showDeleteConfirmDialog) {
+    // ---------------- Delete dataset dialog ----------------
+    if (showDeleteDs) {
         AlertDialog(
-            onDismissRequest = { showDeleteConfirmDialog = false },
-            title = { Text("Delete Dataset?") },
-            text = { Text("Are you sure you want to delete '${dataset.name}' and all its ${records.size} records? This action cannot be undone.") },
+            onDismissRequest = { showDeleteDs = false },
+            title = { Text("Delete dataset?") },
+            text = { Text("Deletes \"${dataset.name}\" and all ${records.size} records. Cannot be undone.") },
             confirmButton = {
                 Button(
                     onClick = {
-                        showDeleteConfirmDialog = false
+                        showDeleteDs = false
                         onDeleteDataset()
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = DangerRed)
-                ) {
-                    Text("Delete")
-                }
+                ) { Text("Delete") }
             },
             dismissButton = {
-                TextButton(onClick = { showDeleteConfirmDialog = false }) { Text("Cancel") }
+                TextButton(onClick = { showDeleteDs = false }) { Text("Cancel") }
             }
         )
     }
 
-    // Add / Edit Record Dialog
-    if (showAddRecordDialog || editingRecord != null) {
+    // ---------------- Edit / add record dialog ----------------
+    if (addingRecord || editingRecord != null) {
         val target = editingRecord
-        var email by remember { mutableStateOf(target?.fields?.get("email") ?: "") }
-        var password by remember { mutableStateOf(target?.fields?.get("password") ?: "") }
-        var fullName by remember { mutableStateOf(target?.fields?.get("full_name") ?: "") }
-        var username by remember { mutableStateOf(target?.fields?.get("username") ?: "") }
-        var phone by remember { mutableStateOf(target?.fields?.get("phone") ?: "") }
-        var securityQuestion by remember { mutableStateOf(target?.fields?.get("security_question") ?: "") }
-        var securityAnswer by remember { mutableStateOf(target?.fields?.get("security_answer") ?: "") }
-
-        AlertDialog(
-            onDismissRequest = {
-                showAddRecordDialog = false
+        EditRecordDialog(
+            title = if (target == null) "Add record" else "Edit record",
+            initial = target?.fields ?: emptyMap(),
+            onDismiss = {
+                addingRecord = false
                 editingRecord = null
             },
-            title = { Text(if (target != null) "Edit Record" else "Add Record") },
-            text = {
-                Column {
-                    OutlinedTextField(value = fullName, onValueChange = { fullName = it }, label = { Text("Full Name") }, modifier = Modifier.fillMaxWidth())
-                    Spacer(modifier = Modifier.height(4.dp))
-                    OutlinedTextField(value = email, onValueChange = { email = it }, label = { Text("Email") }, modifier = Modifier.fillMaxWidth())
-                    Spacer(modifier = Modifier.height(4.dp))
-                    OutlinedTextField(value = username, onValueChange = { username = it }, label = { Text("Username") }, modifier = Modifier.fillMaxWidth())
-                    Spacer(modifier = Modifier.height(4.dp))
-                    OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Password") }, modifier = Modifier.fillMaxWidth())
-                    Spacer(modifier = Modifier.height(4.dp))
-                    OutlinedTextField(value = phone, onValueChange = { phone = it }, label = { Text("Phone") }, modifier = Modifier.fillMaxWidth())
-                    Spacer(modifier = Modifier.height(4.dp))
-                    OutlinedTextField(value = securityQuestion, onValueChange = { securityQuestion = it }, label = { Text("Security Question") }, modifier = Modifier.fillMaxWidth())
-                    Spacer(modifier = Modifier.height(4.dp))
-                    OutlinedTextField(value = securityAnswer, onValueChange = { securityAnswer = it }, label = { Text("Security Answer") }, modifier = Modifier.fillMaxWidth())
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        val fields = (target?.fields?.toMutableMap() ?: mutableMapOf()).apply {
-                            if (fullName.isNotBlank()) put("full_name", fullName)
-                            if (email.isNotBlank()) put("email", email)
-                            if (username.isNotBlank()) put("username", username)
-                            if (password.isNotBlank()) put("password", password)
-                            if (phone.isNotBlank()) put("phone", phone)
-                            if (securityQuestion.isNotBlank()) put("security_question", securityQuestion)
-                            if (securityAnswer.isNotBlank()) put("security_answer", securityAnswer)
-                        }
-
-                        if (target != null) {
-                            onUpdateRecord(target.copy(fields = fields))
-                        } else {
-                            onAddRecord(fields)
-                        }
-                        showAddRecordDialog = false
-                        editingRecord = null
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = BrandOrange)
-                ) {
-                    Text("Save")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = {
-                    showAddRecordDialog = false
-                    editingRecord = null
-                }) {
-                    Text("Cancel")
-                }
+            onSave = { fields ->
+                if (target == null) onAddRecord(fields) else onUpdateRecord(target.copy(fields = fields))
+                addingRecord = false
+                editingRecord = null
             }
         )
     }
 }
 
 @Composable
-private fun RecordItemCard(
+private fun DetailToggle(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    HorizontalDivider(Modifier.padding(horizontal = 16.dp))
+    ListItem(
+        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+        headlineContent = { Text(label) },
+        trailingContent = { Switch(checked = checked, onCheckedChange = onChange) }
+    )
+}
+
+@Composable
+private fun RecordCard(
     record: DatasetRecord,
     onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
-    var revealPassword by remember { mutableStateOf(false) }
+    var revealPw by remember { mutableStateOf(false) }
 
-    Card(
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(modifier = Modifier.padding(12.dp)) {
+    Card(shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = record.fields["full_name"] ?: record.fields["username"] ?: "Record #${record.orderIndex + 1}",
+                    record.fields["full_name"]
+                        ?: record.fields["username"]
+                        ?: "Record #${record.orderIndex + 1}",
                     fontWeight = FontWeight.Bold,
-                    fontSize = 15.sp,
-                    color = MaterialTheme.colorScheme.onSurface
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
                 )
                 if (record.isUsed) {
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(Color.Gray.copy(alpha = 0.2f))
-                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                    ) {
-                        Text("Used", fontSize = 11.sp, color = Color.Gray)
-                    }
+                    Text(
+                        "USED",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
-
-            Spacer(modifier = Modifier.height(6.dp))
-
-            // Show primary fields
+            Spacer(Modifier.height(6.dp))
             record.fields.forEach { (k, v) ->
                 if (k == "password" || k == "confirm_password") {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("$k: ", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("$k: ", style = MaterialTheme.typography.bodySmall)
                         Text(
-                            text = if (revealPassword) v else "••••••••",
-                            fontSize = 13.sp,
+                            if (revealPw) v else "••••••••",
+                            style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurface
+                            modifier = Modifier.weight(1f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
-                        IconButton(onClick = { revealPassword = !revealPassword }, modifier = Modifier.size(24.dp)) {
+                        IconButton(onClick = { revealPw = !revealPw }, modifier = Modifier.size(24.dp)) {
                             Icon(
-                                painter = painterResource(id = if (revealPassword) R.drawable.ic_lock_open else R.drawable.ic_lock),
+                                painterResource(if (revealPw) R.drawable.ic_lock_open else R.drawable.ic_lock),
                                 contentDescription = "Reveal",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(14.dp)
                             )
                         }
                     }
                 } else {
                     Text(
-                        text = "$k: $v",
-                        fontSize = 13.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        "$k: $v",
+                        style = MaterialTheme.typography.bodySmall,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
             }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End
-            ) {
-                TextButton(onClick = onEdit) {
-                    Text("Edit", fontSize = 13.sp, color = BrandOrange)
-                }
-                TextButton(onClick = onDelete) {
-                    Text("Delete", fontSize = 13.sp, color = DangerRed)
-                }
+            Spacer(Modifier.height(8.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = onEdit) { Text("Edit", color = BrandOrange) }
+                TextButton(onClick = onDelete) { Text("Delete", color = DangerRed) }
             }
         }
     }
+}
+
+@Composable
+private fun EditRecordDialog(
+    title: String,
+    initial: Map<String, String>,
+    onDismiss: () -> Unit,
+    onSave: (Map<String, String>) -> Unit
+) {
+    val mutableFields = remember {
+        mutableStateMapOf<String, String>().apply { putAll(initial) }
+    }
+    var newKey by remember { mutableStateOf("") }
+    var newValue by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(400.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                mutableFields.keys.toList().forEach { key ->
+                    OutlinedTextField(
+                        value = mutableFields[key] ?: "",
+                        onValueChange = { mutableFields[key] = it },
+                        label = { Text(key) },
+                        singleLine = key != "message",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)
+                    )
+                }
+                HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                Text(
+                    "Add field",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Spacer(Modifier.height(4.dp))
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    OutlinedTextField(
+                        value = newKey,
+                        onValueChange = { newKey = it },
+                        label = { Text("Key") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    OutlinedTextField(
+                        value = newValue,
+                        onValueChange = { newValue = it },
+                        label = { Text("Value") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                Spacer(Modifier.height(6.dp))
+                Button(
+                    onClick = {
+                        val k = newKey.trim()
+                        if (k.isNotBlank()) {
+                            mutableFields[k] = newValue
+                            newKey = ""
+                            newValue = ""
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Add field") }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val out = mutableFields.filterValues { it.isNotBlank() }
+                    if (out.isNotEmpty()) onSave(out)
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = BrandOrange)
+            ) { Text("Save") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
 }

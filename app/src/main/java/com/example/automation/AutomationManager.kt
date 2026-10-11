@@ -6,7 +6,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import org.json.JSONObject
@@ -22,146 +21,168 @@ class AutomationManager(
     val repository: AutomationRepository,
     private val scope: CoroutineScope
 ) {
-    val settings: StateFlow<AutomationSettings> = repository.settingsFlow.stateIn(scope, SharingStarted.Eagerly, AutomationSettings())
-    val datasets: StateFlow<List<Dataset>> = repository.datasetsFlow.stateIn(scope, SharingStarted.Eagerly, emptyList())
-    val records: StateFlow<List<DatasetRecord>> = repository.recordsFlow.stateIn(scope, SharingStarted.Eagerly, emptyList())
+    val settings: StateFlow<AutomationSettings> =
+        repository.settingsFlow.stateIn(scope, SharingStarted.Eagerly, AutomationSettings())
+    val datasets: StateFlow<List<Dataset>> =
+        repository.datasetsFlow.stateIn(scope, SharingStarted.Eagerly, emptyList())
+    val records: StateFlow<List<DatasetRecord>> =
+        repository.recordsFlow.stateIn(scope, SharingStarted.Eagerly, emptyList())
 
-    // Active detection state for current page
     val currentFormDetection = MutableStateFlow<FormDetectionInfo?>(null)
-
-    // Last filled record to mark used on submit
     var pendingUsedRecord: DatasetRecord? = null
 
-    // Cache assigned record per page URL so multi-step forms use the same record until page navigates or "next record"
     private val pageRecordCache = mutableMapOf<String, DatasetRecord>()
-
-    // Track used record IDs in current session for RANDOM_WITHOUT_REPEAT
     private val sessionUsedRandomIds = mutableSetOf<String>()
 
-    fun getActiveDataset(): Dataset? {
-        return datasets.value.firstOrNull { it.isActive } ?: datasets.value.firstOrNull()
+    // ---------------- Import helpers ----------------
+
+    fun analyzeContent(content: String, hint: ContentFormat? = null): SmartAnalysisResult =
+        AutomationFileAnalyzer.analyzeSmart(content, hint)
+
+    fun analyzeBytes(bytes: ByteArray): SmartAnalysisResult {
+        val text = AutomationFileAnalyzer.detectEncodingAndRead(bytes)
+        return if (text.isBlank()) SmartAnalysisResult(
+            format = ContentFormat.UNKNOWN,
+            formatConfidence = 0f,
+            detectedColumns = emptyList(),
+            records = emptyList(),
+            totalLines = 0,
+            validRecordCount = 0,
+            skippedLinesCount = 0,
+            needsUserInput = true,
+            userPrompt = "This file looks binary or is too large to read as text."
+        ) else AutomationFileAnalyzer.analyzeSmart(text)
     }
 
-    fun getRecordsForDataset(datasetId: String): List<DatasetRecord> {
-        return records.value.filter { it.datasetId == datasetId }.sortedBy { it.orderIndex }
-    }
+    /**
+     * Persist an imported dataset. If [columns] is provided, values are remapped
+     * using the user-facing normalized type.
+     */
+    suspend fun saveImportedDataset(
+        name: String,
+        sourceFileName: String,
+        columns: List<DetectedColumn>,
+        rows: List<Map<String, String>>,
+        usageMode: UsageMode = UsageMode.SEQUENTIAL_TOP
+    ): Dataset {
+        val dataset = Dataset(
+            name = name.ifBlank { "Untitled dataset" },
+            sourceFileName = sourceFileName,
+            usageMode = usageMode
+        )
+        val activeCols = columns.filter { !it.isIgnored }
+        val typeByRaw = activeCols.associate { it.rawKey to it.normalizedType }
 
-    fun getCachedRecordForUrl(url: String): DatasetRecord? {
-        return pageRecordCache[url]
-    }
+        val mappedRows: List<Map<String, String>> = rows.mapIndexed { idx, row ->
+            val out = mutableMapOf<String, String>()
+            for ((rawKey, value) in row) {
+                val type = typeByRaw[rawKey] ?: rawKey
+                if (value.isNotBlank()) out[type] = value
+            }
+            AutomationFileAnalyzer.deriveMissingFields(out)
+            out
+        }.filter { it.isNotEmpty() }
 
-    fun clearCachedRecordForUrl(url: String) {
-        pageRecordCache.remove(url)
-    }
-
-    fun clearAllPageRecordCaches() {
-        pageRecordCache.clear()
-        sessionUsedRandomIds.clear()
-    }
-
-    fun getNextRecordToFill(dataset: Dataset, pageUrl: String, forceNext: Boolean = false): Pair<DatasetRecord?, String?> {
-        val allRecords = getRecordsForDataset(dataset.id)
-        if (allRecords.isEmpty()) {
-            return Pair(null, "Dataset is empty")
+        val recordEntities = mappedRows.mapIndexed { i, fields ->
+            DatasetRecord(datasetId = dataset.id, fields = fields, orderIndex = i)
         }
 
-        // Check if page already has an assigned record and we are not forcing next
+        repository.saveDatasetWithRecords(dataset, recordEntities)
+        repository.setActiveDataset(dataset.id)
+        return dataset
+    }
+
+    suspend fun updateColumnLabel(datasetId: String, oldType: String, newLabel: String) {
+        // Rename normalized type across records of this dataset.
+        val key = newLabel.trim().lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_')
+        if (key.isBlank()) return
+        val dsRecords = records.value.filter { it.datasetId == datasetId }
+        for (r in dsRecords) {
+            if (r.fields.containsKey(oldType)) {
+                val f = r.fields.toMutableMap()
+                f[key] = f.remove(oldType) ?: ""
+                repository.updateRecord(r.copy(fields = f))
+            }
+        }
+    }
+
+    suspend fun updateRecordField(recordId: String, fieldKey: String, value: String) {
+        val rec = records.value.firstOrNull { it.id == recordId } ?: return
+        val f = rec.fields.toMutableMap()
+        if (value.isBlank()) f.remove(fieldKey) else f[fieldKey] = value
+        repository.updateRecord(rec.copy(fields = f))
+    }
+
+    // ---------------- Fill helpers ----------------
+
+    fun getActiveDataset(): Dataset? =
+        datasets.value.firstOrNull { it.isActive } ?: datasets.value.firstOrNull()
+
+    fun getRecordsForDataset(datasetId: String): List<DatasetRecord> =
+        records.value.filter { it.datasetId == datasetId }.sortedBy { it.orderIndex }
+
+    fun getCachedRecordForUrl(url: String) = pageRecordCache[url]
+    fun clearCachedRecordForUrl(url: String) { pageRecordCache.remove(url) }
+    fun clearAllPageRecordCaches() { pageRecordCache.clear(); sessionUsedRandomIds.clear() }
+
+    fun getNextRecordToFill(dataset: Dataset, pageUrl: String, forceNext: Boolean = false): Pair<DatasetRecord?, String?> {
+        val all = getRecordsForDataset(dataset.id)
+        if (all.isEmpty()) return null to "Dataset is empty"
+
         if (!forceNext && pageUrl.isNotBlank()) {
-            val cached = pageRecordCache[pageUrl]
-            if (cached != null) {
-                // Ensure cached record still exists in dataset
-                val stillExists = allRecords.firstOrNull { it.id == cached.id }
-                if (stillExists != null) {
-                    return Pair(stillExists, null)
-                }
+            pageRecordCache[pageUrl]?.let { cached ->
+                all.firstOrNull { it.id == cached.id }?.let { return it to null }
             }
         }
 
-        val available = if (dataset.skipAlreadyUsed) {
-            allRecords.filter { !it.isUsed }
-        } else {
-            allRecords
-        }
-
+        val available = if (dataset.skipAlreadyUsed) all.filter { !it.isUsed } else all
         if (available.isEmpty()) {
             return if (dataset.loopBackToStart) {
                 scope.launch { repository.markAllRecordsUnused(dataset.id) }
-                val first = allRecords.firstOrNull()
-                if (first != null && pageUrl.isNotBlank()) {
-                    pageRecordCache[pageUrl] = first
-                }
-                Pair(first, "Dataset exhausted. Looped back to start.")
-            } else {
-                Pair(null, "All records have been used. Please reset or choose another dataset.")
-            }
+                val first = all.firstOrNull()
+                if (first != null && pageUrl.isNotBlank()) pageRecordCache[pageUrl] = first
+                first to "Dataset exhausted. Looped back to start."
+            } else null to "All records used. Reset or pick another dataset."
         }
 
-        val chosenRecord: DatasetRecord? = when (dataset.usageMode) {
-            UsageMode.SEQUENTIAL_TOP -> {
-                val idx = dataset.currentIndex.coerceIn(0, available.size - 1)
-                available[idx]
-            }
-            UsageMode.SEQUENTIAL_BOTTOM -> {
-                val idx = (available.size - 1 - dataset.currentIndex).coerceIn(0, available.size - 1)
-                available[idx]
-            }
-            UsageMode.RANDOM -> {
-                available[Random.nextInt(available.size)]
-            }
+        val chosen = when (dataset.usageMode) {
+            UsageMode.SEQUENTIAL_TOP -> available[dataset.currentIndex.coerceIn(0, available.size - 1)]
+            UsageMode.SEQUENTIAL_BOTTOM -> available[(available.size - 1 - dataset.currentIndex).coerceIn(0, available.size - 1)]
+            UsageMode.RANDOM -> available[Random.nextInt(available.size)]
             UsageMode.RANDOM_WITHOUT_REPEAT -> {
-                val unpickedInSession = available.filter { !sessionUsedRandomIds.contains(it.id) }
-                val pool = if (unpickedInSession.isNotEmpty()) unpickedInSession else {
-                    sessionUsedRandomIds.clear()
-                    available
-                }
-                val picked = pool[Random.nextInt(pool.size)]
-                sessionUsedRandomIds.add(picked.id)
-                picked
+                val pool = available.filter { !sessionUsedRandomIds.contains(it.id) }
+                    .ifEmpty { sessionUsedRandomIds.clear(); available }
+                pool[Random.nextInt(pool.size)].also { sessionUsedRandomIds.add(it.id) }
             }
-            UsageMode.MANUAL -> {
-                available.firstOrNull()
-            }
+            UsageMode.MANUAL -> available.firstOrNull()
         }
-
-        if (chosenRecord != null && pageUrl.isNotBlank()) {
-            pageRecordCache[pageUrl] = chosenRecord
-        }
-
-        return Pair(chosenRecord, null)
+        if (chosen != null && pageUrl.isNotBlank()) pageRecordCache[pageUrl] = chosen
+        return chosen to null
     }
 
     fun recordUsed(dataset: Dataset, record: DatasetRecord) {
         scope.launch(Dispatchers.IO) {
-            if (dataset.deleteAfterUse) {
-                repository.deleteRecord(record.id)
-            } else {
-                repository.updateRecord(record.copy(isUsed = true))
-            }
-            val nextIdx = (dataset.currentIndex + 1)
-            repository.updatePointer(dataset.id, nextIdx)
+            if (dataset.deleteAfterUse) repository.deleteRecord(record.id)
+            else repository.updateRecord(record.copy(isUsed = true))
+            repository.updatePointer(dataset.id, dataset.currentIndex + 1)
         }
     }
 
     fun shouldWarnHttpPassword(url: String, record: DatasetRecord): Boolean {
-        val isHttp = url.startsWith("http://", ignoreCase = true)
-        val hasPassword = record.fields.containsKey("password") || record.fields.containsKey("confirm_password")
-        return isHttp && hasPassword
+        val http = url.startsWith("http://", true)
+        val hasPw = record.fields.containsKey("password") || record.fields.containsKey("confirm_password")
+        return http && hasPw
     }
 
     fun buildFillScript(fields: Map<String, String>, highlight: Boolean, autoSubmit: Boolean): String {
-        val jsonObj = JSONObject()
-        fields.forEach { (k, v) -> jsonObj.put(k, v) }
-        val rawJson = jsonObj.toString()
-        // Escape for JS evaluation string literal safely
-        val escaped = rawJson
-            .replace("\\", "\\\\")
-            .replace("'", "\\'")
-            .replace("\n", "\\n")
-            .replace("\r", "\\r")
+        val obj = JSONObject()
+        fields.forEach { (k, v) -> obj.put(k, v) }
+        val escaped = obj.toString()
+            .replace("\\", "\\\\").replace("'", "\\'")
+            .replace("\n", "\\n").replace("\r", "\\r")
         return "if (window.__waterfox_fill_fields) { window.__waterfox_fill_fields('$escaped', $highlight, $autoSubmit); }"
     }
 
-    fun buildUndoScript(): String {
-        return "if (window.__waterfox_undo_fill) { window.__waterfox_undo_fill(); }"
-    }
+    fun buildUndoScript(): String =
+        "if (window.__waterfox_undo_fill) { window.__waterfox_undo_fill(); }"
 }
